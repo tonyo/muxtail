@@ -19,27 +19,6 @@ const (
 	lineLength = 5000
 )
 
-var muxtailBin string
-
-func TestMain(m *testing.M) {
-	bin, err := os.CreateTemp("", "muxtail-*")
-	if err != nil {
-		panic(err)
-	}
-	bin.Close()
-	muxtailBin = bin.Name()
-	defer os.Remove(muxtailBin)
-
-	cmd := exec.Command("go", "build", "-o", muxtailBin, "..")
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		panic("build failed: " + err.Error())
-	}
-
-	os.Exit(m.Run())
-}
-
 func TestFollowStress(t *testing.T) {
 	dir := t.TempDir()
 	fileA := filepath.Join(dir, "file_a.log")
@@ -56,20 +35,23 @@ func TestFollowStress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer outFile.Close()
 
-	muxtail := exec.Command(muxtailBin, "-f", "-n", "0",
+	muxtail := exec.Command("go", "run", "..", "-f", "-n", "0",
 		"--label", "[A] ", "--label", "[B] ",
 		fileA, fileB)
 	muxtail.Stdout = outFile
 	muxtail.Stderr = os.Stderr
 	if err := muxtail.Start(); err != nil {
+		outFile.Close()
 		t.Fatal(err)
 	}
-	defer func() {
+	// Register cleanup after t.TempDir() so it runs first (LIFO):
+	// kill muxtail (releases its fd to output), close outFile, then TempDir removes the dir.
+	t.Cleanup(func() {
 		muxtail.Process.Kill()
 		muxtail.Wait()
-	}()
+		outFile.Close()
+	})
 
 	// Give muxtail time to attach inotify watches.
 	time.Sleep(200 * time.Millisecond)
@@ -136,11 +118,10 @@ func TestFollowStress(t *testing.T) {
 	// Check 2: pattern integrity — label prefix + 9-digit seq + payload of correct char/length.
 	payloadX := strings.Repeat("X", lineLength)
 	payloadY := strings.Repeat("Y", lineLength)
-	reSeq := regexp.MustCompile(`^\d{9}$`)
 	invalid := 0
 	for _, line := range lines {
-		if !validLine(line, "[A] ", "AAA", payloadX, reSeq) &&
-			!validLine(line, "[B] ", "BBB", payloadY, reSeq) {
+		if !validLine(line, "[A] ", "AAA", payloadX) &&
+			!validLine(line, "[B] ", "BBB", payloadY) {
 			invalid++
 			if invalid <= 5 {
 				end := min(len(line), 80)
@@ -203,8 +184,21 @@ func TestFollowStress(t *testing.T) {
 	}
 }
 
+// isNineDigits reports whether s is exactly 9 ASCII decimal digits.
+func isNineDigits(s string) bool {
+	if len(s) != 9 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // validLine checks that line matches: <label><prefix>:<9-digit-seq>:<payload>
-func validLine(line, label, prefix, payload string, seqRe *regexp.Regexp) bool {
+func validLine(line, label, prefix, payload string) bool {
 	rest, ok := strings.CutPrefix(line, label+prefix+":")
 	if !ok {
 		return false
@@ -213,5 +207,5 @@ func validLine(line, label, prefix, payload string, seqRe *regexp.Regexp) bool {
 	if !ok {
 		return false
 	}
-	return seqRe.MatchString(seq) && rest == payload
+	return isNineDigits(seq) && rest == payload
 }
