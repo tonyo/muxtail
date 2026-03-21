@@ -208,7 +208,7 @@ func TestTailFile_Follow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		tailFile(ctx, spec, 0, true, w)
+		tailFile(ctx, spec, 0, true, false, w)
 		close(done)
 	}()
 
@@ -264,7 +264,7 @@ func TestTailFile_NoFollow(t *testing.T) {
 	ctx := context.Background()
 	done := make(chan struct{})
 	go func() {
-		tailFile(ctx, spec, 3, false, w)
+		tailFile(ctx, spec, 3, false, false, w)
 		close(done)
 	}()
 
@@ -283,6 +283,56 @@ func TestTailFile_NoFollow(t *testing.T) {
 		if lines[i] != l {
 			t.Errorf("line %d: want %q, got %q", i, l, lines[i])
 		}
+	}
+}
+
+func TestTailFile_FollowMissingFile(t *testing.T) {
+	spec := FileSpec{Path: "/nonexistent/muxtail_missing.log", Label: "[m] "}
+	var buf bytes.Buffer
+	w := &Writer{w: &buf}
+	ctx := context.Background()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tailFile(ctx, spec, 0, true, false, w)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error for missing file with follow=true, retry=false")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailFile did not return promptly for missing file with follow=true, retry=false")
+	}
+}
+
+func TestTailFile_FollowRetry(t *testing.T) {
+	path := "/tmp/muxtail_retry_test.log"
+	os.Remove(path)
+	spec := FileSpec{Path: path, Label: "[r] "}
+	var buf bytes.Buffer
+	w := &Writer{w: &buf}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tailFile(ctx, spec, 0, true, true, w)
+	}()
+
+	// Should NOT return immediately — it blocks watching for the file.
+	select {
+	case <-done:
+		t.Fatal("tailFile with follow=true, retry=true returned before ctx cancel")
+	case <-time.After(200 * time.Millisecond):
+		// expected: still running
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailFile did not return after ctx cancel")
 	}
 }
 

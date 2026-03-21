@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 
@@ -10,25 +11,33 @@ import (
 )
 
 // tailFile tails a regular file: first emit last N lines, then follow if follow==true.
-func tailFile(ctx context.Context, spec FileSpec, n int, follow bool, w *Writer) {
+// When follow=true and retry=false (-f), the file must exist at startup or an error is returned.
+// When follow=true and retry=true (-F), missing files are tolerated and watched until they appear.
+func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *Writer) error {
+	if follow && !retry {
+		if _, err := os.Stat(spec.Path); err != nil {
+			return fmt.Errorf("%s: %w", spec.Path, err)
+		}
+	}
+
 	if err := emitLastN(spec.Path, n, spec.Label, w); err != nil {
 		// non-fatal: file may be empty or unreadable for initial lines
 		_ = err
 	}
 
 	if !follow {
-		return
+		return nil
 	}
 
 	t, err := tail.TailFile(spec.Path, tail.Config{
 		Follow:    true,
 		ReOpen:    true,
-		MustExist: false,
+		MustExist: !retry,
 		Location:  &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
 		Logger:    tail.DiscardingLogger,
 	})
 	if err != nil {
-		return
+		return err
 	}
 
 	for {
@@ -36,10 +45,10 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow bool, w *Writer)
 		case <-ctx.Done():
 			t.Stop()
 			t.Cleanup()
-			return
+			return nil
 		case line, ok := <-t.Lines:
 			if !ok {
-				return
+				return nil
 			}
 			if line.Err != nil {
 				continue

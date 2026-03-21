@@ -28,12 +28,17 @@ func init() {
 	rootCmd.Flags().StringArrayP("label", "l", nil, "label for next file (repeatable, matched by position)")
 	rootCmd.Flags().IntP("lines", "n", 10, "number of existing lines to show on startup")
 	rootCmd.Flags().BoolP("follow", "f", false, "follow file for new lines")
+	rootCmd.Flags().BoolP("followRetry", "F", false, "same as -f but retry if file is inaccessible")
 }
 
 func run(cmd *cobra.Command, args []string) error {
 	labels, _ := cmd.Flags().GetStringArray("label")
 	n, _ := cmd.Flags().GetInt("lines")
 	follow, _ := cmd.Flags().GetBool("follow")
+	retry, _ := cmd.Flags().GetBool("followRetry")
+	if retry {
+		follow = true
+	}
 
 	if len(args) == 0 {
 		args = []string{"-"}
@@ -68,6 +73,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	writer := &Writer{w: os.Stdout}
 
+	errCh := make(chan error, len(specs))
 	var wg sync.WaitGroup
 	for _, spec := range specs {
 		spec := spec
@@ -77,12 +83,18 @@ func run(cmd *cobra.Command, args []string) error {
 			if spec.Path == "-" {
 				tailStdin(ctx, spec.Label, writer)
 			} else {
-				tailFile(ctx, spec, n, follow, writer)
+				errCh <- tailFile(ctx, spec, n, follow, retry, writer)
 			}
 		}()
 	}
 
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
