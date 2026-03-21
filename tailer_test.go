@@ -336,26 +336,152 @@ func TestTailFile_FollowRetry(t *testing.T) {
 	}
 }
 
-// --- label resolution (via run integration) ---
+// --- resolveLabel ---
 
-func TestLabelResolution_DefaultBasename(t *testing.T) {
+func TestResolveLabel(t *testing.T) {
+	cases := []struct {
+		path, mode, want string
+	}{
+		{"app.log", "none", ""},
+		{"app.log", "basename", "app.log: "},
+		{"/a/b.log", "fullname", "/a/b.log: "},
+		{"-", "basename", "stdin: "},
+		{"-", "fullname", "stdin: "},
+		{"app.log", "label:[X] ", "[X] "},
+		{"app.log", "", ""},
+	}
+	for _, tc := range cases {
+		got := resolveLabel(tc.path, tc.mode)
+		if got != tc.want {
+			t.Errorf("resolveLabel(%q, %q) = %q, want %q", tc.path, tc.mode, got, tc.want)
+		}
+	}
+}
+
+// --- parseArgs ---
+
+func TestParseArgs(t *testing.T) {
+	cases := []struct {
+		name      string
+		argv      []string
+		wantSpecs []FileSpec
+		wantN     int
+		wantFollow bool
+		wantErr   bool
+	}{
+		{
+			name:      "single file no prefix",
+			argv:      []string{"f1"},
+			wantSpecs: []FileSpec{{Path: "f1", Label: ""}},
+			wantN:     10,
+		},
+		{
+			name:      "basename prefix two files",
+			argv:      []string{"-p", "basename", "f1", "f2"},
+			wantSpecs: []FileSpec{{Path: "f1", Label: "f1: "}, {Path: "f2", Label: "f2: "}},
+			wantN:     10,
+		},
+		{
+			name:  "mixed basename and fullname",
+			argv:  []string{"-p", "basename", "f1", "-p", "fullname", "f2"},
+			wantSpecs: []FileSpec{{Path: "f1", Label: "f1: "}, {Path: "f2", Label: "f2: "}},
+			wantN: 10,
+		},
+		{
+			name:    "two prefix in a row",
+			argv:    []string{"-p", "basename", "-p", "fullname", "f1"},
+			wantErr: true,
+		},
+		{
+			name:    "trailing prefix no file",
+			argv:    []string{"f1", "-p", "basename"},
+			wantErr: true,
+		},
+		{
+			name:       "n and follow flags",
+			argv:       []string{"-n", "5", "-f", "f1"},
+			wantSpecs:  []FileSpec{{Path: "f1", Label: ""}},
+			wantN:      5,
+			wantFollow: true,
+		},
+		{
+			name:      "label prefix",
+			argv:      []string{"-p", "label:[A] ", "f1"},
+			wantSpecs: []FileSpec{{Path: "f1", Label: "[A] "}},
+			wantN:     10,
+		},
+		{
+			name:      "no args defaults to stdin",
+			argv:      []string{},
+			wantSpecs: []FileSpec{{Path: "-", Label: ""}},
+			wantN:     10,
+		},
+		{
+			name:      "prefix equals syntax",
+			argv:      []string{"--prefix=basename", "f1"},
+			wantSpecs: []FileSpec{{Path: "f1", Label: "f1: "}},
+			wantN:     10,
+		},
+		{
+			name:    "invalid mode",
+			argv:    []string{"--prefix=baseneme", "f1"},
+			wantErr: true,
+		},
+		{
+			name:       "F flag sets follow and retry",
+			argv:       []string{"-F", "f1"},
+			wantSpecs:  []FileSpec{{Path: "f1", Label: ""}},
+			wantN:      10,
+			wantFollow: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			specs, n, follow, _, err := parseArgs(tc.argv)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if n != tc.wantN {
+				t.Errorf("n: want %d, got %d", tc.wantN, n)
+			}
+			if follow != tc.wantFollow {
+				t.Errorf("follow: want %v, got %v", tc.wantFollow, follow)
+			}
+			if len(specs) != len(tc.wantSpecs) {
+				t.Fatalf("specs len: want %d, got %d: %v", len(tc.wantSpecs), len(specs), specs)
+			}
+			for i, s := range tc.wantSpecs {
+				if specs[i].Path != s.Path || specs[i].Label != s.Label {
+					t.Errorf("spec[%d]: want %+v, got %+v", i, s, specs[i])
+				}
+			}
+		})
+	}
+}
+
+// --- emitLastN with label prefix ---
+
+func TestEmitLastN_WithLabel(t *testing.T) {
 	dir := t.TempDir()
 	f, _ := os.CreateTemp(dir, "app.log")
 	f.Close()
-
-	// emitLastN with default label should use basename
-	label := "app.log "
-	var buf bytes.Buffer
-	w := &Writer{w: &buf}
-	fmt.Fprintln(f) // no-op since closed, but let's write via path
 	os.WriteFile(f.Name(), []byte("hello\n"), 0644)
 
-	if err := emitLastN(f.Name(), 1, label, w); err != nil {
+	var buf bytes.Buffer
+	w := &Writer{w: &buf}
+	if err := emitLastN(f.Name(), 1, "app.log: ", w); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.TrimRight(buf.String(), "\n")
-	if got != "app.log hello" {
-		t.Errorf("want %q, got %q", "app.log hello", got)
+	if got != "app.log: hello" {
+		t.Errorf("want %q, got %q", "app.log: hello", got)
 	}
 }
 
