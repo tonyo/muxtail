@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -101,7 +102,6 @@ func lastNLines(r io.ReadSeeker, n int) ([]string, error) {
 		return nil, nil
 	}
 
-	// Scan backwards collecting newlines until we find n+1 of them.
 	// Peek at the last byte: if the file doesn't end with '\n', EOF acts as
 	// a line terminator, so we need one fewer '\n' to delimit n lines.
 	lastByte := make([]byte, 1)
@@ -113,9 +113,6 @@ func lastNLines(r io.ReadSeeker, n int) ([]string, error) {
 	}
 	trailingNewline := lastByte[0] == '\n'
 
-	buf := make([]byte, 0, chunkSize)
-	offset := size
-	newlines := 0
 	// We want n lines, which means n newline boundaries. We stop when we've
 	// found n+1 newline boundaries (or hit the start of file).
 	// If there's no trailing newline, EOF counts as one boundary already.
@@ -124,6 +121,12 @@ func lastNLines(r io.ReadSeeker, n int) ([]string, error) {
 		target--
 	}
 
+	// Scan backwards to find the byte offset where the last n lines begin.
+	// Reuse a single chunk buffer — no accumulated prepending.
+	chunk := make([]byte, chunkSize)
+	offset := size
+	newlines := 0
+	startAbs := int64(0)
 outer:
 	for offset > 0 {
 		read := int64(chunkSize)
@@ -131,54 +134,38 @@ outer:
 			read = offset
 		}
 		offset -= read
-		chunk := make([]byte, read)
 		if _, err := r.Seek(offset, io.SeekStart); err != nil {
 			return nil, err
 		}
-		if _, err := io.ReadFull(r, chunk); err != nil {
+		if _, err := io.ReadFull(r, chunk[:read]); err != nil {
 			return nil, err
 		}
-		// prepend chunk to buf
-		buf = append(chunk, buf...)
 		for i := int(read) - 1; i >= 0; i-- {
 			if chunk[i] == '\n' {
 				newlines++
 				if newlines >= target {
-					// trim buf to start after this newline position
-					pos := int64(i) + 1 // position in chunk
-					absPos := offset + pos
-					buf = buf[absPos-offset:]
+					startAbs = offset + int64(i) + 1
 					break outer
 				}
 			}
 		}
 	}
 
-	// buf now contains the last n lines (possibly with trailing newline)
-	scanner := bufio.NewScanner(newlineReader(buf))
+	// Seek to startAbs and read the tail in one forward pass.
+	if _, err := r.Seek(startAbs, io.SeekStart); err != nil {
+		return nil, err
+	}
+	data := make([]byte, size-startAbs)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, err
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	var lines []string
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
 	return lines, scanner.Err()
-}
-
-type bytesReader struct {
-	data []byte
-	pos  int
-}
-
-func newlineReader(data []byte) io.Reader {
-	return &bytesReader{data: data}
-}
-
-func (b *bytesReader) Read(p []byte) (int, error) {
-	if b.pos >= len(b.data) {
-		return 0, io.EOF
-	}
-	n := copy(p, b.data[b.pos:])
-	b.pos += n
-	return n, nil
 }
 
 // tailStdin reads lines from stdin and writes them with the given label.
