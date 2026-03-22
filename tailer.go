@@ -29,11 +29,20 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 		return nil
 	}
 
+	// If the file doesn't exist yet (retry mode), start from the beginning when
+	// it appears. If it already exists, start from the end to skip old content.
+	seekWhence := io.SeekEnd
+	if retry {
+		if _, statErr := os.Stat(spec.Path); os.IsNotExist(statErr) {
+			seekWhence = io.SeekStart
+		}
+	}
+
 	t, err := tail.TailFile(spec.Path, tail.Config{
 		Follow:    true,
 		ReOpen:    true,
 		MustExist: !retry,
-		Location:  &tail.SeekInfo{Offset: 0, Whence: io.SeekEnd},
+		Location:  &tail.SeekInfo{Offset: 0, Whence: seekWhence},
 		Logger:    tail.DiscardingLogger,
 	})
 	if err != nil {

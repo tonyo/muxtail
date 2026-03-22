@@ -307,6 +307,51 @@ func TestTailFile_FollowMissingFile(t *testing.T) {
 	}
 }
 
+func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
+	path := "/tmp/muxtail_retry_firstwrite_test.log"
+	os.Remove(path)
+	defer os.Remove(path)
+
+	spec := FileSpec{Path: path, Label: "[r] "}
+	cap := &captureWriter{}
+	w := cap.writer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tailFile(ctx, spec, 0, true, true, w)
+	}()
+
+	// Give tailer time to start watching.
+	time.Sleep(100 * time.Millisecond)
+
+	// Create the file and write the first line.
+	if err := os.WriteFile(path, []byte("first line\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the first line to appear.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if lines := cap.snapshot(); len(lines) >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	<-done
+
+	lines := cap.snapshot()
+	if len(lines) == 0 {
+		t.Fatal("first write to newly-created file was not captured")
+	}
+	if lines[0] != "[r] first line" {
+		t.Errorf("got %q, want %q", lines[0], "[r] first line")
+	}
+}
+
 func TestTailFile_FollowRetry(t *testing.T) {
 	path := "/tmp/muxtail_retry_test.log"
 	os.Remove(path)
@@ -347,7 +392,6 @@ func TestResolveLabel(t *testing.T) {
 		{"/a/b.log", "fullname", "/a/b.log: "},
 		{"-", "basename", "stdin: "},
 		{"-", "fullname", "stdin: "},
-		{"app.log", "label:[X] ", "[X] "},
 		{"app.log", "", ""},
 	}
 	for _, tc := range cases {
@@ -358,87 +402,72 @@ func TestResolveLabel(t *testing.T) {
 	}
 }
 
-// --- parseArgs ---
+// --- buildSpecs ---
 
-func TestParseArgs(t *testing.T) {
+func TestBuildSpecs(t *testing.T) {
 	cases := []struct {
-		name      string
-		argv      []string
-		wantSpecs []FileSpec
-		wantN     int
-		wantFollow bool
-		wantErr   bool
+		name       string
+		args       []string
+		labels     []string
+		prefixMode string
+		wantSpecs  []FileSpec
+		wantErr    bool
 	}{
 		{
-			name:      "single file no prefix",
-			argv:      []string{"f1"},
-			wantSpecs: []FileSpec{{Path: "f1", Label: ""}},
-			wantN:     10,
-		},
-		{
-			name:      "basename prefix two files",
-			argv:      []string{"-p", "basename", "f1", "f2"},
-			wantSpecs: []FileSpec{{Path: "f1", Label: "f1: "}, {Path: "f2", Label: "f2: "}},
-			wantN:     10,
-		},
-		{
-			name:  "mixed basename and fullname",
-			argv:  []string{"-p", "basename", "f1", "-p", "fullname", "f2"},
-			wantSpecs: []FileSpec{{Path: "f1", Label: "f1: "}, {Path: "f2", Label: "f2: "}},
-			wantN: 10,
-		},
-		{
-			name:    "two prefix in a row",
-			argv:    []string{"-p", "basename", "-p", "fullname", "f1"},
-			wantErr: true,
-		},
-		{
-			name:    "trailing prefix no file",
-			argv:    []string{"f1", "-p", "basename"},
-			wantErr: true,
-		},
-		{
-			name:       "n and follow flags",
-			argv:       []string{"-n", "5", "-f", "f1"},
+			name:       "single file no prefix",
+			args:       []string{"f1"},
+			prefixMode: "none",
 			wantSpecs:  []FileSpec{{Path: "f1", Label: ""}},
-			wantN:      5,
-			wantFollow: true,
 		},
 		{
-			name:      "label prefix",
-			argv:      []string{"-p", "label:[A] ", "f1"},
-			wantSpecs: []FileSpec{{Path: "f1", Label: "[A] "}},
-			wantN:     10,
+			name:       "basename prefix two files",
+			args:       []string{"f1", "f2"},
+			prefixMode: "basename",
+			wantSpecs:  []FileSpec{{Path: "f1", Label: "f1: "}, {Path: "f2", Label: "f2: "}},
 		},
 		{
-			name:      "no args defaults to stdin",
-			argv:      []string{},
-			wantSpecs: []FileSpec{{Path: "-", Label: ""}},
-			wantN:     10,
+			name:       "fullname prefix",
+			args:       []string{"/a/b.log"},
+			prefixMode: "fullname",
+			wantSpecs:  []FileSpec{{Path: "/a/b.log", Label: "/a/b.log: "}},
 		},
 		{
-			name:      "prefix equals syntax",
-			argv:      []string{"--prefix=basename", "f1"},
-			wantSpecs: []FileSpec{{Path: "f1", Label: "f1: "}},
-			wantN:     10,
+			name:       "label overrides first file, prefix applies to second",
+			args:       []string{"f1", "f2"},
+			labels:     []string{"[A] "},
+			prefixMode: "basename",
+			wantSpecs:  []FileSpec{{Path: "f1", Label: "[A] "}, {Path: "f2", Label: "f2: "}},
 		},
 		{
-			name:    "invalid mode",
-			argv:    []string{"--prefix=baseneme", "f1"},
+			name:       "labels for all files",
+			args:       []string{"f1", "f2"},
+			labels:     []string{"[A] ", "[B] "},
+			prefixMode: "none",
+			wantSpecs:  []FileSpec{{Path: "f1", Label: "[A] "}, {Path: "f2", Label: "[B] "}},
+		},
+		{
+			name:    "more labels than files",
+			args:    []string{"f1"},
+			labels:  []string{"[A] ", "[B] "},
 			wantErr: true,
 		},
 		{
-			name:       "F flag sets follow and retry",
-			argv:       []string{"-F", "f1"},
-			wantSpecs:  []FileSpec{{Path: "f1", Label: ""}},
-			wantN:      10,
-			wantFollow: true,
+			name:       "no args stdin",
+			args:       []string{"-"},
+			prefixMode: "none",
+			wantSpecs:  []FileSpec{{Path: "-", Label: ""}},
+		},
+		{
+			name:       "stdin with basename prefix",
+			args:       []string{"-"},
+			prefixMode: "basename",
+			wantSpecs:  []FileSpec{{Path: "-", Label: "stdin: "}},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			specs, n, follow, _, err := parseArgs(tc.argv)
+			specs, err := buildSpecs(tc.args, tc.labels, tc.prefixMode)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
@@ -447,12 +476,6 @@ func TestParseArgs(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
-			}
-			if n != tc.wantN {
-				t.Errorf("n: want %d, got %d", tc.wantN, n)
-			}
-			if follow != tc.wantFollow {
-				t.Errorf("follow: want %v, got %v", tc.wantFollow, follow)
 			}
 			if len(specs) != len(tc.wantSpecs) {
 				t.Fatalf("specs len: want %d, got %d: %v", len(tc.wantSpecs), len(specs), specs)

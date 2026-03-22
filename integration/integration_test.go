@@ -37,7 +37,7 @@ func TestFollowStress(t *testing.T) {
 	}
 
 	muxtail := exec.Command("go", "run", "..", "-f", "-n", "0",
-		"--prefix=label:[A] ", fileA, "--prefix=label:[B] ", fileB)
+		"--label=[A] ", "--label=[B] ", fileA, fileB)
 	muxtail.Stdout = outFile
 	muxtail.Stderr = os.Stderr
 	if err := muxtail.Start(); err != nil {
