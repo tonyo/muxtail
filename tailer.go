@@ -52,7 +52,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 	for {
 		select {
 		case <-ctx.Done():
-			t.Stop()
+			_ = t.Stop()
 			t.Cleanup()
 			return nil
 		case line, ok := <-t.Lines:
@@ -78,7 +78,7 @@ func emitLastN(path string, n int, label string, w *Writer) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	lines, err := lastNLines(f, n)
 	if err != nil {

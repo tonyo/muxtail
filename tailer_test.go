@@ -185,9 +185,9 @@ func TestEmitLastN(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 20; i++ {
-		fmt.Fprintf(f, "line %d\n", i)
+		_, _ = fmt.Fprintf(f, "line %d\n", i)
 	}
-	f.Close()
+	_ = f.Close()
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
@@ -226,7 +226,7 @@ func TestTailFile_Follow(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := f.Name()
-	f.Close()
+	_ = f.Close()
 
 	cap := &captureWriter{}
 	w := cap.writer()
@@ -235,7 +235,7 @@ func TestTailFile_Follow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		tailFile(ctx, spec, 0, true, false, w)
+		_ = tailFile(ctx, spec, 0, true, false, w)
 		close(done)
 	}()
 
@@ -248,9 +248,9 @@ func TestTailFile_Follow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 3; i++ {
-		fmt.Fprintf(f2, "new line %d\n", i)
+		_, _ = fmt.Fprintf(f2, "new line %d\n", i)
 	}
-	f2.Close()
+	_ = f2.Close()
 
 	// Wait for lines to be picked up.
 	deadline := time.Now().Add(3 * time.Second)
@@ -287,9 +287,9 @@ func TestTailFile_NoFollow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 5; i++ {
-		fmt.Fprintf(f, "line %d\n", i)
+		_, _ = fmt.Fprintf(f, "line %d\n", i)
 	}
-	f.Close()
+	_ = f.Close()
 
 	cap := &captureWriter{}
 	w := cap.writer()
@@ -298,7 +298,7 @@ func TestTailFile_NoFollow(t *testing.T) {
 	ctx := context.Background()
 	done := make(chan struct{})
 	go func() {
-		tailFile(ctx, spec, 3, false, false, w)
+		_ = tailFile(ctx, spec, 3, false, false, w)
 		close(done)
 	}()
 
@@ -343,8 +343,8 @@ func TestTailFile_FollowMissingFile(t *testing.T) {
 
 func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 	path := "/tmp/muxtail_retry_firstwrite_test.log"
-	os.Remove(path)
-	defer os.Remove(path)
+	_ = os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	spec := FileSpec{Path: path, Label: "[r] "}
 	cap := &captureWriter{}
@@ -388,7 +388,7 @@ func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 
 func TestTailFile_FollowRetry(t *testing.T) {
 	path := "/tmp/muxtail_retry_test.log"
-	os.Remove(path)
+	_ = os.Remove(path)
 	spec := FileSpec{Path: path, Label: "[r] "}
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
@@ -448,7 +448,7 @@ func TestTailStdin(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		tailStdin(ctx, r, "[in] ", cap.writer())
+		_ = tailStdin(ctx, r, "[in] ", cap.writer())
 		close(done)
 	}()
 
@@ -472,18 +472,18 @@ func TestTailStdin(t *testing.T) {
 
 func TestTailStdin_CancelMidStream(t *testing.T) {
 	pr, pw := io.Pipe()
-	defer pw.Close()
+	defer func() { _ = pw.Close() }()
 
 	cap := &captureWriter{}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan struct{})
 	go func() {
-		tailStdin(ctx, pr, "[in] ", cap.writer())
+		_ = tailStdin(ctx, pr, "[in] ", cap.writer())
 		close(done)
 	}()
 
-	fmt.Fprintln(pw, "hello")
+	_, _ = fmt.Fprintln(pw, "hello")
 
 	// Wait for the line to arrive then cancel.
 	deadline := time.Now().Add(2 * time.Second)
@@ -599,8 +599,8 @@ func TestBuildSpecs(t *testing.T) {
 func TestEmitLastN_WithLabel(t *testing.T) {
 	dir := t.TempDir()
 	f, _ := os.CreateTemp(dir, "app.log")
-	f.Close()
-	os.WriteFile(f.Name(), []byte("hello\n"), 0644)
+	_ = f.Close()
+	_ = os.WriteFile(f.Name(), []byte("hello\n"), 0644)
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}

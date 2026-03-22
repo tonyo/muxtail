@@ -49,7 +49,7 @@ func TestFollowStress(t *testing.T) {
 	muxtail.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logf("starting muxtail (go run)")
 	if err := muxtail.Start(); err != nil {
-		outFile.Close()
+		_ = outFile.Close()
 		t.Fatal(err)
 	}
 	logf("muxtail pid %d started", muxtail.Process.Pid)
@@ -57,9 +57,9 @@ func TestFollowStress(t *testing.T) {
 	// kill muxtail (releases its fd to output), close outFile, then TempDir removes the dir.
 	t.Cleanup(func() {
 		// Kill the entire process group to catch the compiled binary spawned by go run.
-		syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
-		muxtail.Wait()
-		outFile.Close()
+		_ = syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
+		_ = muxtail.Wait()
+		_ = outFile.Close()
 	})
 
 	// Give muxtail time to attach inotify watches.
@@ -79,11 +79,11 @@ func TestFollowStress(t *testing.T) {
 			t.Errorf("open %s: %v", path, err)
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		payload := strings.Repeat(char, lineLength)
 		w := bufio.NewWriterSize(f, 1<<20)
 		for i := 0; i < numLines; i++ {
-			fmt.Fprintf(w, "%s:%09d:%s\n", prefix, i, payload)
+			_, _ = fmt.Fprintf(w, "%s:%09d:%s\n", prefix, i, payload)
 		}
 		if err := w.Flush(); err != nil {
 			t.Errorf("flush %s: %v", path, err)
@@ -114,15 +114,15 @@ func TestFollowStress(t *testing.T) {
 	}
 	logf("poll complete")
 
-	syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
-	muxtail.Wait()
+	_ = syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
+	_ = muxtail.Wait()
 
 	// Stream through the output file once for all checks — no full load into memory.
 	f, err := os.Open(output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	payloadX := strings.Repeat("X", lineLength)
 	payloadY := strings.Repeat("Y", lineLength)
@@ -208,7 +208,7 @@ func countNewlines(path string) int {
 	if err != nil {
 		return 0
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	buf := make([]byte, 32*1024)
 	count := 0
 	for {

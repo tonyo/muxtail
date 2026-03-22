@@ -1,7 +1,13 @@
-.PHONY: build test test-race test-integration test-all clean
+.PHONY: build vet lint test test-race test-integration test-all clean
 
 build:
 	go build ./...
+
+vet:
+	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 test:
 	go test -v .
