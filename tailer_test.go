@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -148,6 +149,20 @@ func TestWriter_AtomicLines(t *testing.T) {
 		if !strings.HasSuffix(l, "hello") {
 			t.Errorf("mangled line: %q", l)
 		}
+	}
+}
+
+func TestWriter_Timestamps(t *testing.T) {
+	var buf bytes.Buffer
+	w := &Writer{w: &buf, timestamps: true}
+	w.WriteLine("[lbl] ", "hello")
+	got := buf.String()
+	matched, err := regexp.MatchString(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} \[lbl\] hello\n$`, got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matched {
+		t.Errorf("output %q does not match timestamp pattern", got)
 	}
 }
 

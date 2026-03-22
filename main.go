@@ -19,11 +19,12 @@ type FileSpec struct {
 }
 
 var (
-	flagLines  int
-	flagFollow bool
-	flagRetry  bool
-	flagPrefix string
-	flagLabels []string
+	flagLines      int
+	flagFollow     bool
+	flagRetry      bool
+	flagPrefix     string
+	flagLabels     []string
+	flagTimestamps bool
 )
 
 var rootCmd = &cobra.Command{
@@ -38,6 +39,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&flagRetry, "follow-retry", "F", false, "follow, retry if file is missing")
 	rootCmd.Flags().StringVarP(&flagPrefix, "prefix", "p", "none", "global prefix mode: none|basename|fullname")
 	rootCmd.Flags().StringArrayVarP(&flagLabels, "label", "l", nil, "per-file label (repeatable, positional)")
+	rootCmd.Flags().BoolVarP(&flagTimestamps, "ts", "T", false, "prepend each line with a timestamp")
 }
 
 // resolveLabel returns the prefix string for a file given a mode.
@@ -101,7 +103,7 @@ func run(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	writer := &Writer{w: os.Stdout}
+	writer := &Writer{w: os.Stdout, timestamps: flagTimestamps}
 
 	errCh := make(chan error, len(specs))
 	var wg sync.WaitGroup
