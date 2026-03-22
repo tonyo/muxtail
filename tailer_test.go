@@ -201,8 +201,8 @@ func TestTailFile_Follow(t *testing.T) {
 	name := f.Name()
 	f.Close()
 
-	var buf bytes.Buffer
-	w := &Writer{w: &buf}
+	cap := &captureWriter{}
+	w := cap.writer()
 	spec := FileSpec{Path: name, Label: "[f] "}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -228,7 +228,7 @@ func TestTailFile_Follow(t *testing.T) {
 	// Wait for lines to be picked up.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Count(buf.String(), "\n") >= 3 {
+		if len(cap.snapshot()) >= 3 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -237,11 +237,18 @@ func TestTailFile_Follow(t *testing.T) {
 	cancel()
 	<-done
 
-	got := buf.String()
+	lines := cap.snapshot()
 	for i := 1; i <= 3; i++ {
 		want := fmt.Sprintf("[f] new line %d", i)
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in output:\n%s", want, got)
+		found := false
+		for _, l := range lines {
+			if strings.Contains(l, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %q in output: %v", want, lines)
 		}
 	}
 }
