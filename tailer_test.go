@@ -243,7 +243,7 @@ func TestTailFile_Follow(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Append lines to the file.
-	f2, err := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0644)
+	f2, err := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Create the file and write the first line.
-	if err := os.WriteFile(path, []byte("first line\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("first line\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -600,7 +600,7 @@ func TestEmitLastN_WithLabel(t *testing.T) {
 	dir := t.TempDir()
 	f, _ := os.CreateTemp(dir, "app.log")
 	_ = f.Close()
-	_ = os.WriteFile(f.Name(), []byte("hello\n"), 0644)
+	_ = os.WriteFile(f.Name(), []byte("hello\n"), 0o644)
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}

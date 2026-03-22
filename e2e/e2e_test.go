@@ -26,7 +26,7 @@ func TestFollowStress(t *testing.T) {
 	output := filepath.Join(dir, "output.txt")
 
 	for _, f := range []string{fileA, fileB} {
-		if err := os.WriteFile(f, nil, 0644); err != nil {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -74,7 +74,7 @@ func TestFollowStress(t *testing.T) {
 	writeLines := func(path, prefix, char string) {
 		defer wg.Done()
 		<-start
-		f, err := os.OpenFile(path, os.O_WRONLY, 0644)
+		f, err := os.OpenFile(path, os.O_WRONLY, 0o644)
 		if err != nil {
 			t.Errorf("open %s: %v", path, err)
 			return

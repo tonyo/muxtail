@@ -11,9 +11,10 @@ go test -run TestName . # run a single test
 go test -race ./...     # run tests with race detector
 make vet                # run go vet
 make lint               # run golangci-lint
+make fmt                # format files
 ```
 
-Run `make vet && make lint` after every change to Go files.
+Run `make fmt && make vet && make lint` after every change to Go files.
 
 ## Architecture
 

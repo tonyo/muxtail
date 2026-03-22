@@ -2,7 +2,8 @@ version: "2"
 
 formatters:
   enable:
-    - gofmt
+    - gofumpt
+    - goimports
 
 linters:
   enable:
