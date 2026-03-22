@@ -1,0 +1,16 @@
+# Binary
+/muxtail
+
+# Test output
+*.test
+*.out
+
+# Build cache / cover profiles
+coverage.out
+coverage.html
+cpu.prof
+mem.prof
+
+# Editor
+*.swp
+*.swo
