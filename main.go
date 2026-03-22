@@ -111,7 +111,7 @@ func run(cmd *cobra.Command, args []string) error {
 		go func() {
 			defer wg.Done()
 			if spec.Path == "-" {
-				tailStdin(ctx, spec.Label, writer)
+				tailStdin(ctx, os.Stdin, spec.Label, writer)
 			} else {
 				errCh <- tailFile(ctx, spec, flagLines, flagFollow || flagRetry, flagRetry, writer)
 			}

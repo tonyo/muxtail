@@ -169,8 +169,8 @@ outer:
 }
 
 // tailStdin reads lines from stdin and writes them with the given label.
-func tailStdin(ctx context.Context, label string, w *Writer) {
-	scanner := bufio.NewScanner(os.Stdin)
+func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) {
+	scanner := bufio.NewScanner(r)
 	lines := make(chan string)
 
 	go func() {

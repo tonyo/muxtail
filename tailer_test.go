@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -406,6 +407,77 @@ func TestResolveLabel(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("resolveLabel(%q, %q) = %q, want %q", tc.path, tc.mode, got, tc.want)
 		}
+	}
+}
+
+// --- tailStdin ---
+
+func TestTailStdin(t *testing.T) {
+	input := "line one\nline two\nline three\n"
+	r := strings.NewReader(input)
+
+	cap := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		tailStdin(ctx, r, "[in] ", cap.writer())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailStdin did not return after reader was exhausted")
+	}
+
+	want := []string{"[in] line one", "[in] line two", "[in] line three"}
+	got := cap.snapshot()
+	if len(got) != len(want) {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+func TestTailStdin_CancelMidStream(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	cap := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		tailStdin(ctx, pr, "[in] ", cap.writer())
+		close(done)
+	}()
+
+	fmt.Fprintln(pw, "hello")
+
+	// Wait for the line to arrive then cancel.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(cap.snapshot()) >= 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailStdin did not return after context cancel")
+	}
+
+	lines := cap.snapshot()
+	if len(lines) == 0 || lines[0] != "[in] hello" {
+		t.Errorf("want [\"[in] hello\"], got %v", lines)
 	}
 }
 
