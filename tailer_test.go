@@ -166,6 +166,17 @@ func TestWriter_Timestamps(t *testing.T) {
 	}
 }
 
+func TestColorizeLabel(t *testing.T) {
+	got := colorizeLabel("[api] ", "\033[36m")
+	want := "\033[36m[api] \033[0m"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if colorizeLabel("", "\033[36m") != "" {
+		t.Error("empty label should be unchanged")
+	}
+}
+
 // --- emitLastN ---
 
 func TestEmitLastN(t *testing.T) {

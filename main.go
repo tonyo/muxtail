@@ -25,7 +25,36 @@ var (
 	flagPrefix     string
 	flagLabels     []string
 	flagTimestamps bool
+	flagNoColor    bool
 )
+
+var ansiColors = []string{
+	"\033[36m", // cyan
+	"\033[32m", // green
+	"\033[33m", // yellow
+	"\033[35m", // magenta
+	"\033[34m", // blue
+	"\033[31m", // red
+	"\033[96m", // bright cyan
+	"\033[92m", // bright green
+	"\033[93m", // bright yellow
+	"\033[95m", // bright magenta
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+func colorizeLabel(label, code string) string {
+	if label == "" {
+		return label
+	}
+	return code + label + "\033[0m"
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "muxtail [flags] [FILE ...]",
@@ -40,6 +69,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&flagPrefix, "prefix", "p", "none", "global prefix mode: none|basename|fullname")
 	rootCmd.Flags().StringArrayVarP(&flagLabels, "label", "l", nil, "per-file label (repeatable, positional)")
 	rootCmd.Flags().BoolVarP(&flagTimestamps, "ts", "T", false, "prepend each line with a timestamp")
+	rootCmd.Flags().BoolVar(&flagNoColor, "no-color", false, "disable colored labels")
 }
 
 // resolveLabel returns the prefix string for a file given a mode.
@@ -90,6 +120,12 @@ func run(cmd *cobra.Command, args []string) error {
 	specs, err := buildSpecs(args, flagLabels, flagPrefix)
 	if err != nil {
 		return err
+	}
+
+	if !flagNoColor && isTerminal(os.Stdout) {
+		for i := range specs {
+			specs[i].Label = colorizeLabel(specs[i].Label, ansiColors[i%len(ansiColors)])
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
