@@ -1,8 +1,7 @@
-package integration
+package e2e
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -36,24 +36,35 @@ func TestFollowStress(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t0 := time.Now()
+	logf := func(format string, args ...any) {
+		t.Logf("[%5.1fs] "+format, append([]any{time.Since(t0).Seconds()}, args...)...)
+	}
+
 	muxtail := exec.Command("go", "run", "..", "-f", "-n", "0",
 		"--label=[A] ", "--label=[B] ", fileA, fileB)
 	muxtail.Stdout = outFile
 	muxtail.Stderr = os.Stderr
+	// Put the process in its own group so we can kill go run + the compiled child together.
+	muxtail.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	logf("starting muxtail (go run)")
 	if err := muxtail.Start(); err != nil {
 		outFile.Close()
 		t.Fatal(err)
 	}
+	logf("muxtail pid %d started", muxtail.Process.Pid)
 	// Register cleanup after t.TempDir() so it runs first (LIFO):
 	// kill muxtail (releases its fd to output), close outFile, then TempDir removes the dir.
 	t.Cleanup(func() {
-		muxtail.Process.Kill()
+		// Kill the entire process group to catch the compiled binary spawned by go run.
+		syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
 		muxtail.Wait()
 		outFile.Close()
 	})
 
 	// Give muxtail time to attach inotify watches.
 	time.Sleep(200 * time.Millisecond)
+	logf("sleep done, starting writers")
 
 	// Start both writers simultaneously via a shared start signal.
 	start := make(chan struct{})
@@ -84,41 +95,48 @@ func TestFollowStress(t *testing.T) {
 	close(start) // release both goroutines at the same instant
 
 	wg.Wait()
+	logf("writers done, output so far: %d lines", countNewlines(output))
 
 	// Poll until expected line count appears or timeout.
+	// countNewlines streams through the file to avoid loading it into memory.
 	expected := numLines * 2
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		data, _ := os.ReadFile(output)
-		if bytes.Count(data, []byte{'\n'}) >= expected {
+		n := countNewlines(output)
+		logf("poll: %d / %d lines", n, expected)
+		if n >= expected {
 			break
 		}
 		if time.Now().After(deadline) {
-			data, _ = os.ReadFile(output)
-			t.Fatalf("timeout: got %d / %d lines", bytes.Count(data, []byte{'\n'}), expected)
+			t.Fatalf("timeout: got %d / %d lines", countNewlines(output), expected)
 		}
 		time.Sleep(time.Second)
 	}
+	logf("poll complete")
 
-	muxtail.Process.Kill()
+	syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
 	muxtail.Wait()
 
-	data, err := os.ReadFile(output)
+	// Stream through the output file once for all checks — no full load into memory.
+	f, err := os.Open(output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	defer f.Close()
 
-	// Check 1: line count.
-	if len(lines) != expected {
-		t.Errorf("check 1 line count: got %d, want %d", len(lines), expected)
-	}
-
-	// Check 2: pattern integrity — label prefix + 9-digit seq + payload of correct char/length.
 	payloadX := strings.Repeat("X", lineLength)
 	payloadY := strings.Repeat("Y", lineLength)
-	invalid := 0
-	for _, line := range lines {
+	seqRe := regexp.MustCompile(`([AB]{3}):(\d{9}):`)
+	seqA := make(map[string]int, numLines)
+	seqB := make(map[string]int, numLines)
+	lineCount, invalid, aWithBBB, bWithAAA := 0, 0, 0, 0
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		lineCount++
+
+		// Check 2: pattern integrity — label prefix + 9-digit seq + payload of correct char/length.
 		if !validLine(line, "[A] ", "AAA", payloadX) &&
 			!validLine(line, "[B] ", "BBB", payloadY) {
 			invalid++
@@ -127,41 +145,42 @@ func TestFollowStress(t *testing.T) {
 				t.Logf("invalid line: %q", line[:end])
 			}
 		}
-	}
-	if invalid > 0 {
-		t.Errorf("check 2 pattern integrity: %d invalid lines", invalid)
-	}
 
-	// Check 3: cross-contamination.
-	aWithBBB, bWithAAA := 0, 0
-	for _, line := range lines {
+		// Check 3: cross-contamination.
 		if strings.HasPrefix(line, "[A]") && strings.Contains(line, "BBB") {
 			aWithBBB++
 		}
 		if strings.HasPrefix(line, "[B]") && strings.Contains(line, "AAA") {
 			bWithAAA++
 		}
+
+		// Check 4: sequence completeness.
+		if m := seqRe.FindStringSubmatch(line); m != nil {
+			switch m[1] {
+			case "AAA":
+				seqA[m[2]]++
+			case "BBB":
+				seqB[m[2]]++
+			}
+		}
 	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check 1: line count.
+	if lineCount != expected {
+		t.Errorf("check 1 line count: got %d, want %d", lineCount, expected)
+	}
+
+	if invalid > 0 {
+		t.Errorf("check 2 pattern integrity: %d invalid lines", invalid)
+	}
+
 	if aWithBBB != 0 || bWithAAA != 0 {
 		t.Errorf("check 3 cross-contamination: [A]+BBB=%d [B]+AAA=%d", aWithBBB, bWithAAA)
 	}
 
-	// Check 4: sequence completeness.
-	seqRe := regexp.MustCompile(`([AB]{3}):(\d{9}):`)
-	seqA := make(map[string]int, numLines)
-	seqB := make(map[string]int, numLines)
-	for _, line := range lines {
-		m := seqRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		switch m[1] {
-		case "AAA":
-			seqA[m[2]]++
-		case "BBB":
-			seqB[m[2]]++
-		}
-	}
 	seqErrs := 0
 	for i := 0; i < numLines; i++ {
 		seq := fmt.Sprintf("%09d", i)
@@ -181,6 +200,29 @@ func TestFollowStress(t *testing.T) {
 	if seqErrs > 0 {
 		t.Errorf("check 4 sequence completeness: %d missing/duplicate", seqErrs)
 	}
+}
+
+// countNewlines streams through the file counting newlines without loading it into memory.
+func countNewlines(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	buf := make([]byte, 32*1024)
+	count := 0
+	for {
+		n, err := f.Read(buf)
+		for _, b := range buf[:n] {
+			if b == '\n' {
+				count++
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return count
 }
 
 // isNineDigits reports whether s is exactly 9 ASCII decimal digits.

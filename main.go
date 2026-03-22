@@ -135,8 +135,12 @@ func run(cmd *cobra.Command, args []string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		cancel()
+		select {
+		case <-sigCh:
+			cancel()
+		case <-ctx.Done():
+		}
+		signal.Stop(sigCh)
 	}()
 
 	writer := &Writer{w: os.Stdout, timestamps: flagTimestamps}
@@ -149,7 +153,7 @@ func run(cmd *cobra.Command, args []string) error {
 		go func() {
 			defer wg.Done()
 			if spec.Path == "-" {
-				tailStdin(ctx, os.Stdin, spec.Label, writer)
+				errCh <- tailStdin(ctx, os.Stdin, spec.Label, writer)
 			} else {
 				errCh <- tailFile(ctx, spec, flagLines, flagFollow || flagRetry, flagRetry, writer)
 			}

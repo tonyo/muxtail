@@ -22,8 +22,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 	}
 
 	if err := emitLastN(spec.Path, n, spec.Label, w); err != nil {
-		// non-fatal: file may be empty or unreadable for initial lines
-		_ = err
+		fmt.Fprintf(os.Stderr, "muxtail: %s: %v\n", spec.Path, err)
 	}
 
 	if !follow {
@@ -61,6 +60,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 				return nil
 			}
 			if line.Err != nil {
+				fmt.Fprintf(os.Stderr, "muxtail: %s: %v\n", spec.Path, line.Err)
 				continue
 			}
 			w.WriteLine(spec.Label, line.Text)
@@ -161,7 +161,7 @@ outer:
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
-	var lines []string
+	lines := make([]string, 0, 128)
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
@@ -169,24 +169,30 @@ outer:
 }
 
 // tailStdin reads lines from stdin and writes them with the given label.
-func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) {
+func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) error {
 	scanner := bufio.NewScanner(r)
 	lines := make(chan string)
+	done := make(chan struct{})
 
 	go func() {
 		defer close(lines)
 		for scanner.Scan() {
-			lines <- scanner.Text()
+			select {
+			case lines <- scanner.Text():
+			case <-done:
+				return
+			}
 		}
 	}()
+	defer close(done)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case line, ok := <-lines:
 			if !ok {
-				return
+				return scanner.Err()
 			}
 			w.WriteLine(label, line)
 		}
