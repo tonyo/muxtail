@@ -1,12 +1,8 @@
 # muxtail
 
-Tail multiple files simultaneously, with labeled and colored output.
+Tail multiple files simultaneously, with optional labeled and colored output.
 
-```
-2026-03-22T14:05:01 [api] GET /health 200
-2026-03-22T14:05:01 db.log: SELECT 1
-2026-03-22T14:05:02 [api] POST /login 401
-```
+It's similar to `tail` and `multitail`, but supports line prefixing and does not require terminal.
 
 ## Usage
 
@@ -71,3 +67,7 @@ Or build from source:
 ```
 go build -o muxtail .
 ```
+
+## Notes
+
+**This project has been developed with AI assistance.**
