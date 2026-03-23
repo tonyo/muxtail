@@ -422,10 +422,10 @@ func TestResolveLabel(t *testing.T) {
 		path, mode, want string
 	}{
 		{"app.log", "none", ""},
-		{"app.log", "basename", "app.log: "},
-		{"/a/b.log", "fullname", "/a/b.log: "},
-		{"-", "basename", "stdin: "},
-		{"-", "fullname", "stdin: "},
+		{"app.log", "basename", "app.log:"},
+		{"/a/b.log", "fullname", "/a/b.log:"},
+		{"-", "basename", "stdin:"},
+		{"-", "fullname", "stdin:"},
 		{"app.log", "", ""},
 	}
 	for _, tc := range cases {
@@ -528,20 +528,20 @@ func TestBuildSpecs(t *testing.T) {
 			name:       "basename prefix two files",
 			args:       []string{"f1", "f2"},
 			prefixMode: "basename",
-			wantSpecs:  []FileSpec{{Path: "f1", Label: "f1: "}, {Path: "f2", Label: "f2: "}},
+			wantSpecs:  []FileSpec{{Path: "f1", Label: "f1:"}, {Path: "f2", Label: "f2:"}},
 		},
 		{
 			name:       "fullname prefix",
 			args:       []string{"/a/b.log"},
 			prefixMode: "fullname",
-			wantSpecs:  []FileSpec{{Path: "/a/b.log", Label: "/a/b.log: "}},
+			wantSpecs:  []FileSpec{{Path: "/a/b.log", Label: "/a/b.log:"}},
 		},
 		{
 			name:       "label overrides first file, prefix applies to second",
 			args:       []string{"f1", "f2"},
 			labels:     []string{"[A] "},
 			prefixMode: "basename",
-			wantSpecs:  []FileSpec{{Path: "f1", Label: "[A] "}, {Path: "f2", Label: "f2: "}},
+			wantSpecs:  []FileSpec{{Path: "f1", Label: "[A] "}, {Path: "f2", Label: "f2:"}},
 		},
 		{
 			name:       "labels for all files",
@@ -566,7 +566,7 @@ func TestBuildSpecs(t *testing.T) {
 			name:       "stdin with basename prefix",
 			args:       []string{"-"},
 			prefixMode: "basename",
-			wantSpecs:  []FileSpec{{Path: "-", Label: "stdin: "}},
+			wantSpecs:  []FileSpec{{Path: "-", Label: "stdin:"}},
 		},
 	}
 
@@ -604,12 +604,12 @@ func TestEmitLastN_WithLabel(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	if err := emitLastN(f.Name(), 1, "app.log: ", w); err != nil {
+	if err := emitLastN(f.Name(), 1, "app.log:", w); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.TrimRight(buf.String(), "\n")
-	if got != "app.log: hello" {
-		t.Errorf("want %q, got %q", "app.log: hello", got)
+	if got != "app.log:hello" {
+		t.Errorf("want %q, got %q", "app.log:hello", got)
 	}
 }
 

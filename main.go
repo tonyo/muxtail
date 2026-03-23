@@ -77,14 +77,14 @@ func resolveLabel(path, mode string) string {
 	switch mode {
 	case "basename":
 		if path == "-" {
-			return "stdin: "
+			return "stdin:"
 		}
-		return filepath.Base(path) + ": "
+		return filepath.Base(path) + ":"
 	case "fullname":
 		if path == "-" {
-			return "stdin: "
+			return "stdin:"
 		}
-		return path + ": "
+		return path + ":"
 	default: // "none", ""
 		return ""
 	}

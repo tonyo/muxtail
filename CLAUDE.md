@@ -16,6 +16,8 @@ make fmt                # format files
 
 Run `make fmt && make vet && make lint` after every change to Go files.
 
+Do not run `git commit` or `git push` unless explicitly asked.
+
 ## Architecture
 
 Single-package `main` CLI with three files:
@@ -27,7 +29,7 @@ Single-package `main` CLI with three files:
 - **output.go** — `Writer` wraps `io.Writer` with a `sync.Mutex`; `WriteLine(label, line)` is the only write path, ensuring atomic output across all goroutines.
 
 ### Label convention
-Labels are user-owned strings and are written verbatim before each line — users include their own spacing/brackets (e.g. `"[db] "`). Auto-generated labels (basename) get a trailing space appended automatically. ANSI color codes are pre-applied to labels in `main.go` (before passing to tailers) when stdout is a terminal and `--no-color` is not set.
+Labels are user-owned strings and are written verbatim before each line — users include their own spacing/brackets (e.g. `"[db] "`). Auto-generated labels (basename/fullname) get a colon appended (e.g. `"app.log:"`). ANSI color codes are pre-applied to labels in `main.go` (before passing to tailers) when stdout is a terminal and `--no-color` is not set.
 
 ### Color assignment
 `colorizeLabel(label, code)` wraps a non-empty label with an ANSI escape + reset. Colors cycle through `ansiColors` (10 entries) indexed by file position. Terminal detection uses `os.File.Stat()` + `os.ModeCharDevice`. Empty labels (no prefix mode, no `--label`) are left uncolored.
