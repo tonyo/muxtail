@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	numLines   = 20000
+	numLines   = 20002
 	lineLength = 5000
 )
 
@@ -41,13 +41,24 @@ func TestFollowStress(t *testing.T) {
 		t.Logf("[%5.1fs] "+format, append([]any{time.Since(t0).Seconds()}, args...)...)
 	}
 
-	muxtail := exec.Command("go", "run", "..", "-f", "-n", "0",
+	// Build first so compilation time doesn't race with the writers.
+	bin := filepath.Join(dir, "muxtail")
+	build := exec.Command("go", "build", "-o", bin, "..")
+	build.Stderr = os.Stderr
+	logf("building muxtail")
+	if err := build.Run(); err != nil {
+		_ = outFile.Close()
+		t.Fatal("build failed:", err)
+	}
+	logf("build done")
+
+	muxtail := exec.Command(bin, "-f", "-n", "0",
 		"--label=[A] ", "--label=[B] ", fileA, fileB)
 	muxtail.Stdout = outFile
 	muxtail.Stderr = os.Stderr
-	// Put the process in its own group so we can kill go run + the compiled child together.
+	// Put the process in its own group so we can kill the binary.
 	muxtail.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	logf("starting muxtail (go run)")
+	logf("starting muxtail")
 	if err := muxtail.Start(); err != nil {
 		_ = outFile.Close()
 		t.Fatal(err)
@@ -56,7 +67,6 @@ func TestFollowStress(t *testing.T) {
 	// Register cleanup after t.TempDir() so it runs first (LIFO):
 	// kill muxtail (releases its fd to output), close outFile, then TempDir removes the dir.
 	t.Cleanup(func() {
-		// Kill the entire process group to catch the compiled binary spawned by go run.
 		_ = syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
 		_ = muxtail.Wait()
 		_ = outFile.Close()
@@ -69,10 +79,8 @@ func TestFollowStress(t *testing.T) {
 	// Start both writers simultaneously via a shared start signal.
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(2)
 
 	writeLines := func(path, prefix, char string) {
-		defer wg.Done()
 		<-start
 		f, err := os.OpenFile(path, os.O_WRONLY, 0o644)
 		if err != nil {
@@ -90,25 +98,28 @@ func TestFollowStress(t *testing.T) {
 		}
 	}
 
-	go writeLines(fileA, "AAA", "X")
-	go writeLines(fileB, "BBB", "Y")
+	wg.Go(func() { writeLines(fileA, "AAA", "X") })
+	wg.Go(func() { writeLines(fileB, "BBB", "Y") })
 	close(start) // release both goroutines at the same instant
 
 	wg.Wait()
-	logf("writers done, output so far: %d lines", countNewlines(output))
 
-	// Poll until expected line count appears or timeout.
-	// countNewlines streams through the file to avoid loading it into memory.
-	expected := numLines * 2
+	// Each output line: label(4) + prefix(3) + ":" + seq(9) + ":" + payload + "\n"
+	outputLineSize := int64(4 + 3 + 1 + 9 + 1 + lineLength + 1)
+	expectedLines := numLines * 2
+	expectedSize := int64(expectedLines) * outputLineSize
+	logf("writers done, output so far: %d / %d bytes", fileSize(output), expectedSize)
+
+	// Poll until expected file size is reached or timeout.
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		n := countNewlines(output)
-		logf("poll: %d / %d lines", n, expected)
-		if n >= expected {
+		sz := fileSize(output)
+		logf("poll: %d / %d bytes", sz, expectedSize)
+		if sz >= expectedSize {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timeout: got %d / %d lines", countNewlines(output), expected)
+			t.Fatalf("timeout: got %d / %d bytes", fileSize(output), expectedSize)
 		}
 		time.Sleep(time.Second)
 	}
@@ -169,8 +180,8 @@ func TestFollowStress(t *testing.T) {
 	}
 
 	// Check 1: line count.
-	if lineCount != expected {
-		t.Errorf("check 1 line count: got %d, want %d", lineCount, expected)
+	if lineCount != expectedLines {
+		t.Errorf("check 1 line count: got %d, want %d", lineCount, expectedLines)
 	}
 
 	if invalid > 0 {
@@ -202,27 +213,12 @@ func TestFollowStress(t *testing.T) {
 	}
 }
 
-// countNewlines streams through the file counting newlines without loading it into memory.
-func countNewlines(path string) int {
-	f, err := os.Open(path)
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
 	if err != nil {
 		return 0
 	}
-	defer func() { _ = f.Close() }()
-	buf := make([]byte, 32*1024)
-	count := 0
-	for {
-		n, err := f.Read(buf)
-		for _, b := range buf[:n] {
-			if b == '\n' {
-				count++
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-	return count
+	return fi.Size()
 }
 
 // isNineDigits reports whether s is exactly 9 ASCII decimal digits.
