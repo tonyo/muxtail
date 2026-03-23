@@ -12,18 +12,15 @@ lint:
 
 .PHONY: test
 test:
-	go test -v .
+	go test -count=1 -v ./...
 
 .PHONY: test-race
 test-race:
-	CGO_ENABLED=1 go test -race -v .
+	CGO_ENABLED=1 go test -count=1 -race -v ./...
 
 .PHONY: test-integration
 test-integration:
-	go test ./integration/...
-
-.PHONY: test-all
-test-all: test-race test-integration
+	go test -count=1 -v ./e2e/...
 
 .PHONY: format fmt
 format fmt:
