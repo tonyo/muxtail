@@ -18,7 +18,7 @@ type Writer struct {
 func (w *Writer) WriteLine(label, line string) {
 	var ts string
 	if w.timestamps {
-		ts = time.Now().Format("2006-01-02T15:04:05") + " "
+		ts = time.Now().Format(time.RFC3339) + " "
 	}
 	w.mu.Lock()
 	if w.timestamps {

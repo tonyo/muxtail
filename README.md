@@ -53,9 +53,9 @@ muxtail -f -l "[api] " -l "[db] " app.log db.log
 muxtail -Tf app.log
 ```
 ```
-2024-11-01T12:00:01 starting server on :8080
-2024-11-01T12:00:02 GET /health 200
-2024-11-01T12:00:05 POST /users 201
+2024-11-01T12:00:01+00:00 starting server on :8080
+2024-11-01T12:00:02+00:00 GET /health 200
+2024-11-01T12:00:05+00:00 POST /users 201
 ```
 
 **Disable colors (e.g. when piping):**
@@ -73,8 +73,8 @@ Colors are also suppressed automatically when stdout is not a terminal.
 kubectl logs -f my-pod | muxtail --ts -l "[pod] "
 ```
 ```
-2024-11-01T12:00:01 [pod] starting up
-2024-11-01T12:00:02 [pod] ready to serve traffic
+2024-11-01T12:00:01+00:00 [pod] starting up
+2024-11-01T12:00:02+00:00 [pod] ready to serve traffic
 ```
 
 ## Prefix modes

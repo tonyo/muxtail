@@ -157,7 +157,7 @@ func TestWriter_Timestamps(t *testing.T) {
 	w := &Writer{w: &buf, timestamps: true}
 	w.WriteLine("[lbl] ", "hello")
 	got := buf.String()
-	matched, err := regexp.MatchString(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} \[lbl\] hello\n$`, got)
+	matched, err := regexp.MatchString(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2}) \[lbl\] hello\n$`, got)
 	if err != nil {
 		t.Fatal(err)
 	}
