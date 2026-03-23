@@ -423,9 +423,8 @@ func TestResolveLabel(t *testing.T) {
 	}{
 		{"app.log", "none", ""},
 		{"app.log", "basename", "app.log:"},
-		{"/a/b.log", "fullname", "/a/b.log:"},
 		{"-", "basename", "stdin:"},
-		{"-", "fullname", "stdin:"},
+		{"-", "abspath", "stdin:"},
 		{"app.log", "", ""},
 	}
 	for _, tc := range cases {
@@ -434,6 +433,20 @@ func TestResolveLabel(t *testing.T) {
 			t.Errorf("resolveLabel(%q, %q) = %q, want %q", tc.path, tc.mode, got, tc.want)
 		}
 	}
+
+	// abspath resolves to absolute path regardless of how the path was given.
+	t.Run("abspath resolves relative", func(t *testing.T) {
+		got := resolveLabel("app.log", "abspath")
+		if !strings.HasPrefix(got, "/") || !strings.HasSuffix(got, "/app.log:") {
+			t.Errorf("resolveLabel(app.log, abspath) = %q, want absolute path ending in /app.log:", got)
+		}
+	})
+	t.Run("abspath keeps absolute", func(t *testing.T) {
+		got := resolveLabel("/a/b.log", "abspath")
+		if got != "/a/b.log:" {
+			t.Errorf("resolveLabel(/a/b.log, abspath) = %q, want /a/b.log:", got)
+		}
+	})
 }
 
 // --- tailStdin ---
@@ -531,9 +544,9 @@ func TestBuildSpecs(t *testing.T) {
 			wantSpecs:  []FileSpec{{Path: "f1", Label: "f1:"}, {Path: "f2", Label: "f2:"}},
 		},
 		{
-			name:       "fullname prefix",
+			name:       "abspath prefix",
 			args:       []string{"/a/b.log"},
-			prefixMode: "fullname",
+			prefixMode: "abspath",
 			wantSpecs:  []FileSpec{{Path: "/a/b.log", Label: "/a/b.log:"}},
 		},
 		{

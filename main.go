@@ -66,7 +66,7 @@ func init() {
 	rootCmd.Flags().IntVarP(&flagLines, "lines", "n", 10, "initial lines to show")
 	rootCmd.Flags().BoolVarP(&flagFollow, "follow", "f", false, "follow file for new lines")
 	rootCmd.Flags().BoolVarP(&flagRetry, "follow-retry", "F", false, "follow, retry if file is missing")
-	rootCmd.Flags().StringVarP(&flagPrefix, "prefix", "p", "none", "global prefix mode: none|basename|fullname")
+	rootCmd.Flags().StringVarP(&flagPrefix, "prefix", "p", "none", "global prefix mode: none|basename|abspath")
 	rootCmd.Flags().StringArrayVarP(&flagLabels, "label", "l", nil, "per-file label (repeatable, positional)")
 	rootCmd.Flags().BoolVarP(&flagTimestamps, "ts", "T", false, "prepend each line with a timestamp")
 	rootCmd.Flags().BoolVar(&flagNoColor, "no-color", false, "disable colored labels")
@@ -80,18 +80,22 @@ func resolveLabel(path, mode string) string {
 			return "stdin:"
 		}
 		return filepath.Base(path) + ":"
-	case "fullname":
+	case "abspath":
 		if path == "-" {
 			return "stdin:"
 		}
-		return path + ":"
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			abs = path
+		}
+		return abs + ":"
 	default: // "none", ""
 		return ""
 	}
 }
 
 func isValidPrefixMode(mode string) bool {
-	return mode == "none" || mode == "basename" || mode == "fullname" || mode == ""
+	return mode == "none" || mode == "basename" || mode == "abspath" || mode == ""
 }
 
 // buildSpecs combines positional labels and prefix mode into FileSpecs.
@@ -112,7 +116,7 @@ func buildSpecs(args, labels []string, prefixMode string) ([]FileSpec, error) {
 
 func run(cmd *cobra.Command, args []string) error {
 	if !isValidPrefixMode(flagPrefix) {
-		return fmt.Errorf("invalid --prefix %q: must be none, basename, or fullname", flagPrefix)
+		return fmt.Errorf("invalid --prefix %q: must be none, basename, or abspath", flagPrefix)
 	}
 	if len(args) == 0 {
 		args = []string{"-"}

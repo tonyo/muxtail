@@ -19,7 +19,7 @@ Pass `-` or omit files to read from stdin.
 | `--lines` | `-n` | `10` | Initial lines to show per file |
 | `--follow` | `-f` | off | Follow files for new lines |
 | `--follow-retry` | `-F` | off | Follow and retry if file is missing/recreated |
-| `--prefix` | `-p` | `none` | Auto-label mode: `none`, `basename`, `fullname` |
+| `--prefix` | `-p` | `none` | Auto-label mode: `none`, `basename`, `abspath` |
 | `--label` | `-l` | — | Per-file label (repeatable, positional) |
 | `--ts` | `-T` | off | Prepend each line with a timestamp |
 | `--no-color` | — | off | Disable colored labels |
@@ -31,10 +31,10 @@ Pass `-` or omit files to read from stdin.
 muxtail -p basename app.log db.log
 ```
 ```
-app.log: line 1
-db.log: line 1
-app.log: line 2
-db.log: line 2
+app.log:line 1
+db.log:line 1
+app.log:line 2
+db.log:line 2
 ```
 
 **Follow with custom labels:**
@@ -63,8 +63,8 @@ muxtail -Tf app.log
 muxtail --no-color -p basename app.log db.log | grep ERROR
 ```
 ```
-app.log: ERROR connection refused
-db.log: ERROR timeout after 30s
+app.log:ERROR connection refused
+db.log:ERROR timeout after 30s
 ```
 Colors are also suppressed automatically when stdout is not a terminal.
 
@@ -84,10 +84,10 @@ kubectl logs -f my-pod | muxtail --ts -l "[pod] "
 | Mode | Label for `/var/log/app.log` | Description |
 |------|------------------------------|-------------|
 | `none` (default) | _(no label)_ | Lines are written with no prefix |
-| `basename` | `app.log: ` | Uses the filename without the directory path |
-| `fullname` | `/var/log/app.log: ` | Uses the full path as given on the command line |
+| `basename` | `app.log:` | Uses the filename without the directory path |
+| `abspath` | `/var/log/app.log:` | Resolves and uses the absolute path of the file |
 
-For stdin (`-`), both `basename` and `fullname` produce `stdin: `.
+For stdin (`-`), both `basename` and `abspath` produce `stdin:`.
 
 `--label` overrides `--prefix` on a per-file basis (matched positionally). Unlabeled files fall back to the `--prefix` mode.
 
