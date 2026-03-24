@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/hpcloud/tail"
+	"github.com/nxadm/tail"
 )
 
 // tailFile tails a regular file: first emit last N lines, then follow if follow==true.
@@ -39,11 +39,12 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 	}
 
 	t, err := tail.TailFile(spec.Path, tail.Config{
-		Follow:    true,
-		ReOpen:    true,
-		MustExist: !retry,
-		Location:  &tail.SeekInfo{Offset: 0, Whence: seekWhence},
-		Logger:    tail.DiscardingLogger,
+		Follow:        true,
+		ReOpen:        true,
+		MustExist:     !retry,
+		Location:      &tail.SeekInfo{Offset: 0, Whence: seekWhence},
+		Logger:        tail.DiscardingLogger,
+		CompleteLines: true,
 	})
 	if err != nil {
 		return err
