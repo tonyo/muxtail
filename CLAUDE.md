@@ -18,6 +18,15 @@ Run `make fmt && make vet && make lint` after running tests.
 
 Do not run `git commit` or `git push` unless explicitly asked.
 
+## Release process
+
+Versions follow semver (`vMAJOR.MINOR.PATCH`). To cut a release:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
 ## Architecture
 
 Single-package `main` CLI with three files:
