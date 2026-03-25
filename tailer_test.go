@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -191,7 +192,7 @@ func TestEmitLastN(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	if err := emitLastN(f.Name(), 5, "[x] ", w); err != nil {
+	if _, err := emitLastN(f.Name(), 5, "[x] ", w); err != nil {
 		t.Fatal(err)
 	}
 
@@ -211,7 +212,7 @@ func TestEmitLastN(t *testing.T) {
 func TestEmitLastN_MissingFile(t *testing.T) {
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	err := emitLastN("/nonexistent/path.log", 5, "[x] ", w)
+	_, err := emitLastN("/nonexistent/path.log", 5, "[x] ", w)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -412,6 +413,174 @@ func TestTailFile_FollowRetry(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("tailFile did not return after ctx cancel")
+	}
+}
+
+func TestTailFile_FollowDoesNotMissLinesBetweenEmitAndFollow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Write 5 initial lines — emitLastN will read exactly these 5 and stop.
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		_, _ = fmt.Fprintf(f, "initial %d\n", i)
+	}
+	_ = f.Close()
+
+	// Append 3 "race window" lines to the file before the tailer starts.
+	// emitLastN is called with n=5, so it reads up to the offset after "initial 4\n"
+	// and then closes the file. nxadm/tail then opens the file independently.
+	// Bug:  nxadm/tail seeks to the current EOF (after these 3 lines) — skipping them.
+	// Fix:  nxadm/tail seeks to emitLastN's stop offset — picks them up.
+	f, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		_, _ = fmt.Fprintf(f, "racewindow %d\n", i)
+	}
+	_ = f.Close()
+
+	cap := &captureWriter{}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, 5, true, false, cap.writer())
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var found int
+		for _, l := range cap.snapshot() {
+			if strings.HasPrefix(l, "racewindow ") {
+				found++
+			}
+		}
+		if found == 3 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("expected all 3 race-window lines to appear in follow output, but they were skipped")
+}
+
+func TestTailFile_FollowWithInitialLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 10; i++ {
+		_, _ = fmt.Fprintf(f, "line %d\n", i)
+	}
+	_ = f.Close()
+
+	cap := &captureWriter{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, 5, true, false, cap.writer())
+	}()
+
+	// Wait for the 5 initial lines (lines 6-10).
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(cap.snapshot()) >= 5 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	initial := cap.snapshot()
+	if len(initial) != 5 {
+		t.Fatalf("want 5 initial lines, got %d: %v", len(initial), initial)
+	}
+	for i, want := range []string{"line 6", "line 7", "line 8", "line 9", "line 10"} {
+		if initial[i] != want {
+			t.Errorf("initial[%d]: want %q, got %q", i, want, initial[i])
+		}
+	}
+
+	// Append 3 new lines and verify they're followed.
+	f2, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 11; i <= 13; i++ {
+		_, _ = fmt.Fprintf(f2, "line %d\n", i)
+	}
+	_ = f2.Close()
+
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(cap.snapshot()) >= 8 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	all := cap.snapshot()
+	if len(all) != 8 {
+		t.Fatalf("want 8 total lines (5 initial + 3 new), got %d: %v", len(all), all)
+	}
+	for i, want := range []string{"line 11", "line 12", "line 13"} {
+		if all[5+i] != want {
+			t.Errorf("new[%d]: want %q, got %q", i, want, all[5+i])
+		}
+	}
+}
+
+func TestEmitLastN_ZeroNReturnsOffset(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	content := "alpha\nbeta\ngamma\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	w := &Writer{w: &buf}
+	offset, err := emitLastN(path, 0, "", w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("n=0: expected no output, got %q", buf.String())
+	}
+	want := int64(len(content))
+	if offset != want {
+		t.Errorf("n=0: offset = %d, want %d", offset, want)
+	}
+}
+
+func TestEmitLastN_ReturnsOffset(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	var sb strings.Builder
+	for i := 1; i <= 10; i++ {
+		_, _ = fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	content := sb.String()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	w := &Writer{w: &buf}
+	offset, err := emitLastN(path, 3, "", w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int64(len(content))
+	if offset != want {
+		t.Errorf("offset = %d, want %d (file size)", offset, want)
 	}
 }
 
@@ -617,7 +786,7 @@ func TestEmitLastN_WithLabel(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	if err := emitLastN(f.Name(), 1, "app.log:", w); err != nil {
+	if _, err := emitLastN(f.Name(), 1, "app.log:", w); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.TrimRight(buf.String(), "\n")

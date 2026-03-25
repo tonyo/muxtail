@@ -21,20 +21,44 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 		}
 	}
 
-	if err := emitLastN(spec.Path, n, spec.Label, w); err != nil {
-		fmt.Fprintf(os.Stderr, "muxtail: %s: %v\n", spec.Path, err)
+	// Record the file's inode and size before emitLastN so we can detect
+	// truncation or rotation that occurs between emitLastN closing the file
+	// and nxadm/tail opening it.
+	var inode1 uint64
+	if fi, err := os.Stat(spec.Path); err == nil {
+		inode1 = fileInode(fi)
+	}
+
+	emitOffset, emitErr := emitLastN(spec.Path, n, spec.Label, w)
+	if emitErr != nil {
+		fmt.Fprintf(os.Stderr, "muxtail: %s: %v\n", spec.Path, emitErr)
 	}
 
 	if !follow {
 		return nil
 	}
 
-	// If the file doesn't exist yet (retry mode), start from the beginning when
-	// it appears. If it already exists, start from the end to skip old content.
-	seekWhence := io.SeekEnd
+	// Determine where nxadm/tail should start reading.
+	//
+	// Default: absolute byte offset recorded by emitLastN (avoids missing lines
+	// written between emitLastN closing the file and nxadm/tail opening it).
+	//
+	// Adjustments based on what happened while emitLastN was running:
+	//   - Different inode: file was replaced (log rotation) → start at 0
+	//   - Same inode, smaller size: truncated in-place → start at new EOF
+	//   - File doesn't exist yet (retry mode): start at 0
+	seekOffset := emitOffset
+	seekWhence := io.SeekStart
 	if retry {
 		if _, statErr := os.Stat(spec.Path); os.IsNotExist(statErr) {
-			seekWhence = io.SeekStart
+			seekOffset = 0
+		}
+	} else if fi, err := os.Stat(spec.Path); err == nil {
+		switch inode2 := fileInode(fi); {
+		case inode2 != inode1:
+			seekOffset = 0 // file was replaced
+		case fi.Size() < emitOffset:
+			seekOffset = fi.Size() // truncated in-place
 		}
 	}
 
@@ -42,7 +66,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 		Follow:        true,
 		ReOpen:        true,
 		MustExist:     !retry,
-		Location:      &tail.SeekInfo{Offset: 0, Whence: seekWhence},
+		Location:      &tail.SeekInfo{Offset: seekOffset, Whence: seekWhence},
 		Logger:        tail.DiscardingLogger,
 		CompleteLines: true,
 	})
@@ -70,25 +94,32 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 }
 
 // emitLastN reads the last n lines of a file and writes them.
-func emitLastN(path string, n int, label string, w *Writer) error {
-	if n <= 0 {
-		return nil
-	}
-
+// It returns the byte offset at which it stopped reading (the file size at open
+// time), so the caller can resume following from exactly that position.
+func emitLastN(path string, n int, label string, w *Writer) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = f.Close() }()
 
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
+	}
+
+	if n <= 0 {
+		return size, nil
+	}
+
 	lines, err := lastNLines(f, n)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, line := range lines {
 		w.WriteLine(label, line)
 	}
-	return nil
+	return size, nil
 }
 
 // lastNLines returns up to n lines from the end of r.
