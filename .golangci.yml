@@ -15,6 +15,7 @@ linters:
     - unused
     - misspell
     - revive
+    - errorlint
   settings:
     revive:
       rules:
