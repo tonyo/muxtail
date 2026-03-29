@@ -18,6 +18,7 @@ linters:
     - errorlint
     - godot
     - noctx
+    - gocritic
   settings:
     revive:
       rules:
