@@ -343,10 +343,7 @@ func TestTailFile_FollowMissingFile(t *testing.T) {
 }
 
 func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
-	path := "/tmp/muxtail_retry_firstwrite_test.log"
-	os.Remove(path)
-	defer func() { _ = os.Remove(path) }()
-
+	path := filepath.Join(t.TempDir(), "test.log")
 	spec := FileSpec{Path: path, Label: "[r] "}
 	cap := &captureWriter{}
 	w := cap.writer()
@@ -388,8 +385,7 @@ func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 }
 
 func TestTailFile_FollowRetry(t *testing.T) {
-	path := "/tmp/muxtail_retry_test.log"
-	os.Remove(path)
+	path := filepath.Join(t.TempDir(), "test.log")
 	spec := FileSpec{Path: path, Label: "[r] "}
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
