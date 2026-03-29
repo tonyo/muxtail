@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,7 +44,7 @@ func TestFollowStress(t *testing.T) {
 
 	// Build first so compilation time doesn't race with the writers.
 	bin := filepath.Join(dir, "muxtail")
-	build := exec.Command("go", "build", "-o", bin, "..")
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "..")
 	build.Stderr = os.Stderr
 	logf("building muxtail")
 	if err := build.Run(); err != nil {
@@ -52,7 +53,7 @@ func TestFollowStress(t *testing.T) {
 	}
 	logf("build done")
 
-	muxtail := exec.Command(bin, "-f", "-n", "0",
+	muxtail := exec.CommandContext(context.Background(), bin, "-f", "-n", "0",
 		"--label=[A] ", "--label=[B] ", fileA, fileB)
 	muxtail.Stdout = outFile
 	muxtail.Stderr = os.Stderr
@@ -234,7 +235,7 @@ func isNineDigits(s string) bool {
 	return true
 }
 
-// validLine checks that line matches: <label><prefix>:<9-digit-seq>:<payload>
+// validLine checks that line matches: <label><prefix>:<9-digit-seq>:<payload>.
 func validLine(line, label, prefix, payload string) bool {
 	rest, ok := strings.CutPrefix(line, label+prefix+":")
 	if !ok {

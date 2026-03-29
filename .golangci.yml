@@ -16,6 +16,8 @@ linters:
     - misspell
     - revive
     - errorlint
+    - godot
+    - noctx
   settings:
     revive:
       rules:
