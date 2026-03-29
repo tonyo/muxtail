@@ -186,9 +186,9 @@ func TestEmitLastN(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 20; i++ {
-		_, _ = fmt.Fprintf(f, "line %d\n", i)
+		fmt.Fprintf(f, "line %d\n", i)
 	}
-	_ = f.Close()
+	f.Close()
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
@@ -227,7 +227,7 @@ func TestTailFile_Follow(t *testing.T) {
 		t.Fatal(err)
 	}
 	name := f.Name()
-	_ = f.Close()
+	f.Close()
 
 	cap := &captureWriter{}
 	w := cap.writer()
@@ -249,9 +249,9 @@ func TestTailFile_Follow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 3; i++ {
-		_, _ = fmt.Fprintf(f2, "new line %d\n", i)
+		fmt.Fprintf(f2, "new line %d\n", i)
 	}
-	_ = f2.Close()
+	f2.Close()
 
 	// Wait for lines to be picked up.
 	deadline := time.Now().Add(3 * time.Second)
@@ -288,9 +288,9 @@ func TestTailFile_NoFollow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 5; i++ {
-		_, _ = fmt.Fprintf(f, "line %d\n", i)
+		fmt.Fprintf(f, "line %d\n", i)
 	}
-	_ = f.Close()
+	f.Close()
 
 	cap := &captureWriter{}
 	w := cap.writer()
@@ -344,7 +344,7 @@ func TestTailFile_FollowMissingFile(t *testing.T) {
 
 func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 	path := "/tmp/muxtail_retry_firstwrite_test.log"
-	_ = os.Remove(path)
+	os.Remove(path)
 	defer func() { _ = os.Remove(path) }()
 
 	spec := FileSpec{Path: path, Label: "[r] "}
@@ -389,7 +389,7 @@ func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 
 func TestTailFile_FollowRetry(t *testing.T) {
 	path := "/tmp/muxtail_retry_test.log"
-	_ = os.Remove(path)
+	os.Remove(path)
 	spec := FileSpec{Path: path, Label: "[r] "}
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
@@ -426,9 +426,9 @@ func TestTailFile_FollowDoesNotMissLinesBetweenEmitAndFollow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
-		_, _ = fmt.Fprintf(f, "initial %d\n", i)
+		fmt.Fprintf(f, "initial %d\n", i)
 	}
-	_ = f.Close()
+	f.Close()
 
 	// Append 3 "race window" lines to the file before the tailer starts.
 	// emitLastN is called with n=5, so it reads up to the offset after "initial 4\n"
@@ -440,9 +440,9 @@ func TestTailFile_FollowDoesNotMissLinesBetweenEmitAndFollow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		_, _ = fmt.Fprintf(f, "racewindow %d\n", i)
+		fmt.Fprintf(f, "racewindow %d\n", i)
 	}
-	_ = f.Close()
+	f.Close()
 
 	cap := &captureWriter{}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -477,9 +477,9 @@ func TestTailFile_FollowWithInitialLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 10; i++ {
-		_, _ = fmt.Fprintf(f, "line %d\n", i)
+		fmt.Fprintf(f, "line %d\n", i)
 	}
-	_ = f.Close()
+	f.Close()
 
 	cap := &captureWriter{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -513,9 +513,9 @@ func TestTailFile_FollowWithInitialLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 11; i <= 13; i++ {
-		_, _ = fmt.Fprintf(f2, "line %d\n", i)
+		fmt.Fprintf(f2, "line %d\n", i)
 	}
-	_ = f2.Close()
+	f2.Close()
 
 	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -565,7 +565,7 @@ func TestEmitLastN_ReturnsOffset(t *testing.T) {
 
 	var sb strings.Builder
 	for i := 1; i <= 10; i++ {
-		_, _ = fmt.Fprintf(&sb, "line %d\n", i)
+		fmt.Fprintf(&sb, "line %d\n", i)
 	}
 	content := sb.String()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
@@ -665,7 +665,7 @@ func TestTailStdin_CancelMidStream(t *testing.T) {
 		close(done)
 	}()
 
-	_, _ = fmt.Fprintln(pw, "hello")
+	fmt.Fprintln(pw, "hello")
 
 	// Wait for the line to arrive then cancel.
 	deadline := time.Now().Add(2 * time.Second)
@@ -781,8 +781,8 @@ func TestBuildSpecs(t *testing.T) {
 func TestEmitLastN_WithLabel(t *testing.T) {
 	dir := t.TempDir()
 	f, _ := os.CreateTemp(dir, "app.log")
-	_ = f.Close()
-	_ = os.WriteFile(f.Name(), []byte("hello\n"), 0o644)
+	f.Close()
+	os.WriteFile(f.Name(), []byte("hello\n"), 0o644)
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}

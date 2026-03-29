@@ -87,11 +87,11 @@ func TestFollowStress(t *testing.T) {
 			t.Errorf("open %s: %v", path, err)
 			return
 		}
-		defer func() { _ = f.Close() }()
+		defer f.Close()
 		payload := strings.Repeat(char, lineLength)
 		w := bufio.NewWriterSize(f, 1<<20)
 		for i := 0; i < numLines; i++ {
-			_, _ = fmt.Fprintf(w, "%s:%09d:%s\n", prefix, i, payload)
+			fmt.Fprintf(w, "%s:%09d:%s\n", prefix, i, payload)
 		}
 		if err := w.Flush(); err != nil {
 			t.Errorf("flush %s: %v", path, err)
@@ -125,15 +125,15 @@ func TestFollowStress(t *testing.T) {
 	}
 	logf("poll complete")
 
-	_ = syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
-	_ = muxtail.Wait()
+	syscall.Kill(-muxtail.Process.Pid, syscall.SIGKILL)
+	muxtail.Wait()
 
 	// Stream through the output file once for all checks — no full load into memory.
 	f, err := os.Open(output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 
 	payloadX := strings.Repeat("X", lineLength)
 	payloadY := strings.Repeat("Y", lineLength)

@@ -22,9 +22,9 @@ func (w *Writer) WriteLine(label, line string) {
 	}
 	w.mu.Lock()
 	if w.timestamps {
-		_, _ = fmt.Fprintf(w.w, "%s%s%s\n", ts, label, line)
+		fmt.Fprintf(w.w, "%s%s%s\n", ts, label, line)
 	} else {
-		_, _ = fmt.Fprintf(w.w, "%s%s\n", label, line)
+		fmt.Fprintf(w.w, "%s%s\n", label, line)
 	}
 	w.mu.Unlock()
 }

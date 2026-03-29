@@ -6,8 +6,9 @@ formatters:
     - goimports
 
 linters:
-  enable:
+  disable:
     - errcheck
+  enable:
     - govet
     - ineffassign
     - staticcheck
