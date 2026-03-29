@@ -416,6 +416,42 @@ func TestTailFile_FollowRetry(t *testing.T) {
 	}
 }
 
+func TestTailFile_FollowRetry_NoStderrOnMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.log")
+	spec := FileSpec{Path: path, Label: "[r] "}
+	var buf bytes.Buffer
+	w := &Writer{w: &buf}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Redirect os.Stderr to capture any spurious output.
+	r, wPipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origStderr := os.Stderr
+	os.Stderr = wPipe
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tailFile(ctx, spec, 0, true, true, w)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	wPipe.Close()
+	os.Stderr = origStderr
+
+	var stderrBuf bytes.Buffer
+	io.Copy(&stderrBuf, r)
+	r.Close()
+
+	if stderrBuf.Len() > 0 {
+		t.Errorf("unexpected stderr output with -F and missing file: %q", stderrBuf.String())
+	}
+}
+
 func TestTailFile_FollowDoesNotMissLinesBetweenEmitAndFollow(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.log")
