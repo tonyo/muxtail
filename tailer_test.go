@@ -294,7 +294,18 @@ func TestNoColor_Neither(t *testing.T) {
 	}
 }
 
-// --- emitLastN ---
+func TestWriter_WriteLineError(t *testing.T) {
+	w := &Writer{w: &errWriter{err: fmt.Errorf("broken pipe")}}
+	err := w.WriteLine("[lbl] ", "hello")
+	if err == nil {
+		t.Fatal("expected error from failed write, got nil")
+	}
+}
+
+// errWriter always returns an error on Write.
+type errWriter struct{ err error }
+
+func (e *errWriter) Write([]byte) (int, error) { return 0, e.err }
 
 func TestEmitLastN(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "muxtail")

@@ -96,7 +96,9 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 				w.WriteError(fmt.Sprintf("muxtail: %s: %v\n", spec.Path, line.Err))
 				continue
 			}
-			w.WriteLine(spec.Label, line.Text)
+			if err := w.WriteLine(spec.Label, line.Text); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -125,7 +127,9 @@ func emitLastN(path string, n int, label string, w *Writer) (int64, error) {
 		return 0, err
 	}
 	for _, line := range lines {
-		w.WriteLine(label, line)
+		if err := w.WriteLine(label, line); err != nil {
+			return 0, err
+		}
 	}
 	return size, nil
 }
@@ -243,7 +247,9 @@ func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) error 
 			if !ok {
 				return scanner.Err()
 			}
-			w.WriteLine(label, line)
+			if err := w.WriteLine(label, line); err != nil {
+				return err
+			}
 		}
 	}
 }

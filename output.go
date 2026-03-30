@@ -17,19 +17,21 @@ type Writer struct {
 	nowFn      func() time.Time // if nil, uses time.Now
 }
 
-// WriteLine writes a labeled line atomically.
-func (w *Writer) WriteLine(label, line string) {
+// WriteLine writes a labeled line atomically. Returns any write error.
+func (w *Writer) WriteLine(label, line string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	var err error
 	if w.timestamps {
 		now := w.nowFn
 		if now == nil {
 			now = time.Now
 		}
-		fmt.Fprintf(w.w, "%s %s%s\n", now().Format(time.RFC3339), label, line)
+		_, err = fmt.Fprintf(w.w, "%s %s%s\n", now().Format(time.RFC3339), label, line)
 	} else {
-		fmt.Fprintf(w.w, "%s%s\n", label, line)
+		_, err = fmt.Fprintf(w.w, "%s%s\n", label, line)
 	}
+	return err
 }
 
 // WriteError writes a diagnostic message to the error writer atomically.
