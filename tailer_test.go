@@ -827,6 +827,47 @@ func TestEmitLastN_WithLabel(t *testing.T) {
 	}
 }
 
+// --- multi-error ---
+
+func TestTailFile_MultipleErrorsAllReported(t *testing.T) {
+	dir := t.TempDir()
+	missing1 := filepath.Join(dir, "no_such_1.log")
+	missing2 := filepath.Join(dir, "no_such_2.log")
+
+	specs := []FileSpec{
+		{Path: missing1, Label: "[1] "},
+		{Path: missing2, Label: "[2] "},
+	}
+
+	ctx := context.Background()
+	errCh := make(chan error, len(specs))
+	var wg sync.WaitGroup
+	for _, spec := range specs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- tailFile(ctx, spec, 10, true, false, &Writer{w: io.Discard})
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+
+	var errs []error
+	for err := range errCh {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) != 2 {
+		t.Fatalf("want 2 errors, got %d: %v", len(errs), errs)
+	}
+	for i, err := range errs {
+		if !strings.Contains(err.Error(), "no_such_") {
+			t.Errorf("error %d doesn't mention the missing file: %v", i, err)
+		}
+	}
+}
+
 // helpers
 
 func assertLines(t *testing.T, got, want []string) {

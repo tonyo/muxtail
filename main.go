@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -166,12 +167,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 	wg.Wait()
 	close(errCh)
+	var errs []error
 	for err := range errCh {
 		if err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func main() {
