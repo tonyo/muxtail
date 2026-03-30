@@ -99,6 +99,12 @@ func isValidPrefixMode(mode string) bool {
 	return mode == "none" || mode == "basename" || mode == "abspath" || mode == ""
 }
 
+// noColor reports whether color output should be suppressed,
+// respecting both the --no-color flag and the NO_COLOR env var (https://no-color.org/).
+func noColor() bool {
+	return flagNoColor || os.Getenv("NO_COLOR") != ""
+}
+
 // buildSpecs combines positional labels and prefix mode into FileSpecs.
 func buildSpecs(args, labels []string, prefixMode string) ([]FileSpec, error) {
 	if len(labels) > len(args) {
@@ -130,7 +136,7 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if !flagNoColor && isTerminal(os.Stdout) {
+	if !noColor() && isTerminal(os.Stdout) {
 		for i := range specs {
 			specs[i].Label = colorizeLabel(specs[i].Label, ansiColors[i%len(ansiColors)])
 		}

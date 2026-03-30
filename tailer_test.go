@@ -241,6 +241,33 @@ func TestColorizeLabel(t *testing.T) {
 	}
 }
 
+func TestNoColor_EnvVar(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	if !noColor() {
+		t.Error("noColor() should return true when NO_COLOR is set")
+	}
+}
+
+func TestNoColor_Flag(t *testing.T) {
+	orig := flagNoColor
+	flagNoColor = true
+	defer func() { flagNoColor = orig }()
+	if !noColor() {
+		t.Error("noColor() should return true when --no-color flag is set")
+	}
+}
+
+func TestNoColor_Neither(t *testing.T) {
+	orig := flagNoColor
+	flagNoColor = false
+	defer func() { flagNoColor = orig }()
+	t.Setenv("NO_COLOR", "")
+	os.Unsetenv("NO_COLOR")
+	if noColor() {
+		t.Error("noColor() should return false when neither flag nor env is set")
+	}
+}
+
 // --- emitLastN ---
 
 func TestEmitLastN(t *testing.T) {
