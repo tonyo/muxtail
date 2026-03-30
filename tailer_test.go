@@ -167,6 +167,18 @@ func TestWriter_Timestamps(t *testing.T) {
 	}
 }
 
+func TestWriter_Timestamps_UsesNowFn(t *testing.T) {
+	fixed := time.Date(2024, 1, 15, 9, 0, 0, 0, time.UTC)
+	var buf bytes.Buffer
+	w := &Writer{w: &buf, timestamps: true, nowFn: func() time.Time { return fixed }}
+	w.WriteLine("[lbl] ", "hello")
+	got := buf.String()
+	want := "2024-01-15T09:00:00Z [lbl] hello\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestColorizeLabel(t *testing.T) {
 	got := colorizeLabel("[api] ", "\033[36m")
 	want := "\033[36m[api] \033[0m"

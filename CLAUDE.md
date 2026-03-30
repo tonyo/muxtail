@@ -16,6 +16,8 @@ make fmt                # format files
 
 Run `make fmt && make vet && make lint` after running tests.
 
+Use red-green TDD whenever possible: write a failing test first, confirm it fails, then implement the fix and confirm it passes.
+
 Do not run `git commit` or `git push` unless explicitly asked.
 
 ## Release process
