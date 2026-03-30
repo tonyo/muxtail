@@ -42,15 +42,7 @@ func TestFollowStress(t *testing.T) {
 		t.Logf("[%5.1fs] "+format, append([]any{time.Since(t0).Seconds()}, args...)...)
 	}
 
-	// Build first so compilation time doesn't race with the writers.
-	bin := filepath.Join(dir, "muxtail")
-	build := exec.CommandContext(context.Background(), "go", "build", "-o", bin, "..")
-	build.Stderr = os.Stderr
-	logf("building muxtail")
-	if err := build.Run(); err != nil {
-		_ = outFile.Close()
-		t.Fatal("build failed:", err)
-	}
+	bin := buildBinary(t, dir)
 	logf("build done")
 
 	muxtail := exec.CommandContext(context.Background(), bin, "-f", "-n", "0",
@@ -212,38 +204,4 @@ func TestFollowStress(t *testing.T) {
 	if seqErrs > 0 {
 		t.Errorf("check 4 sequence completeness: %d missing/duplicate", seqErrs)
 	}
-}
-
-func fileSize(path string) int64 {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	return fi.Size()
-}
-
-// isNineDigits reports whether s is exactly 9 ASCII decimal digits.
-func isNineDigits(s string) bool {
-	if len(s) != 9 {
-		return false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// validLine checks that line matches: <label><prefix>:<9-digit-seq>:<payload>.
-func validLine(line, label, prefix, payload string) bool {
-	rest, ok := strings.CutPrefix(line, label+prefix+":")
-	if !ok {
-		return false
-	}
-	seq, rest, ok := strings.Cut(rest, ":")
-	if !ok {
-		return false
-	}
-	return isNineDigits(seq) && rest == payload
 }
