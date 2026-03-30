@@ -13,6 +13,15 @@ import (
 // tailFile tails a regular file: first emit last N lines, then follow if follow==true.
 // When follow=true and retry=false (-f), the file must exist at startup or an error is returned.
 // When follow=true and retry=true (-F), missing files are tolerated and watched until they appear.
+
+const (
+	// scannerInitBuf is the initial buffer size for line scanners.
+	scannerInitBuf = 64 * 1024
+	// scannerMaxBuf is the maximum line size a scanner will accept.
+	// Lines longer than this are treated as errors.
+	scannerMaxBuf = 1024 * 1024
+)
+
 func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *Writer) error {
 	if follow && !retry {
 		if _, err := os.Stat(spec.Path); err != nil {
@@ -189,6 +198,7 @@ outer:
 	}
 
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, scannerInitBuf), scannerMaxBuf)
 	lines := make([]string, 0, min(n, 128))
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
@@ -199,6 +209,7 @@ outer:
 // tailStdin reads lines from stdin and writes them with the given label.
 func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) error {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, scannerInitBuf), scannerMaxBuf)
 	lines := make(chan string)
 	done := make(chan struct{})
 

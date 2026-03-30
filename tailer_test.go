@@ -59,22 +59,21 @@ func (l *limitedReadSeeker) Read(p []byte) (int, error) {
 }
 
 func TestLastNLines_NoLargeForwardAlloc(t *testing.T) {
-	// Build content where the last 10 lines alone exceed maxRead bytes,
-	// so a single io.ReadFull of the tail would exceed the limit, but
-	// streaming reads (bufio.Scanner) would not.
-	const maxRead = 4096
+	// Verify the forward pass streams rather than allocating one large buffer.
+	// maxRead == scannerInitBuf; tail of 100 long lines ≈ 70KB.
+	// Old code: io.ReadFull(r, 70KB-buf) → Read(70KB) > maxRead → error.
+	// New code: scanner reads in ≤scannerInitBuf chunks → each Read ≤ maxRead → ok.
 	var sb strings.Builder
 	for i := 0; i < 200; i++ {
-		// Each line is ~500 bytes; last 10 lines ≈ 5000 > maxRead.
-		fmt.Fprintf(&sb, "line %04d %s\n", i, strings.Repeat("x", 490))
+		fmt.Fprintf(&sb, "line %04d %s\n", i, strings.Repeat("x", 700))
 	}
-	r := &limitedReadSeeker{ReadSeeker: strings.NewReader(sb.String()), maxRead: maxRead}
-	lines, err := lastNLines(r, 10)
+	r := &limitedReadSeeker{ReadSeeker: strings.NewReader(sb.String()), maxRead: scannerInitBuf}
+	lines, err := lastNLines(r, 100)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(lines) != 10 {
-		t.Fatalf("want 10 lines, got %d: %v", len(lines), lines)
+	if len(lines) != 100 {
+		t.Fatalf("want 100 lines, got %d", len(lines))
 	}
 }
 
@@ -125,6 +124,23 @@ func TestLastNLines_ZeroN(t *testing.T) {
 	}
 	if len(lines) != 0 {
 		t.Fatalf("expected no lines, got %v", lines)
+	}
+}
+
+func TestLastNLines_LongLine(t *testing.T) {
+	// Line longer than bufio.Scanner's default 64KB token limit.
+	longLine := strings.Repeat("x", 200*1024) // 200 KB
+	input := "before\n" + longLine + "\nafter\n"
+	r := strings.NewReader(input)
+	lines, err := lastNLines(r, 3)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(lines) != 3 {
+		t.Fatalf("want 3 lines, got %d", len(lines))
+	}
+	if lines[1] != longLine {
+		t.Errorf("long line was truncated: got len %d, want %d", len(lines[1]), len(longLine))
 	}
 }
 
@@ -765,6 +781,38 @@ func TestTailStdin_CancelMidStream(t *testing.T) {
 	lines := cap.snapshot()
 	if len(lines) == 0 || lines[0] != "[in] hello" {
 		t.Errorf("want [\"[in] hello\"], got %v", lines)
+	}
+}
+
+// --- buildSpecs ---
+
+func TestTailStdin_LongLine(t *testing.T) {
+	longLine := strings.Repeat("y", 200*1024) // 200 KB
+	input := longLine + "\n"
+	r := strings.NewReader(input)
+
+	cap := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		_ = tailStdin(ctx, r, "", cap.writer())
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailStdin did not return after reader exhausted")
+	}
+
+	lines := cap.snapshot()
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line, got %d", len(lines))
+	}
+	if lines[0] != longLine {
+		t.Errorf("long line was truncated: got len %d, want %d", len(lines[0]), len(longLine))
 	}
 }
 
