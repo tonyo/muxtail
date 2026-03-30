@@ -119,6 +119,9 @@ func run(cmd *cobra.Command, args []string) error {
 	if !isValidPrefixMode(flagPrefix) {
 		return fmt.Errorf("invalid --prefix %q: must be none, basename, or abspath", flagPrefix)
 	}
+	if flagLines < 0 {
+		return fmt.Errorf("invalid --lines %d: must be >= 0", flagLines)
+	}
 	if len(args) == 0 {
 		args = []string{"-"}
 	}

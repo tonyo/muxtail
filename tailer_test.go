@@ -868,6 +868,22 @@ func TestTailFile_MultipleErrorsAllReported(t *testing.T) {
 	}
 }
 
+// --- flagLines validation ---
+
+func TestRun_NegativeLines_ReturnsError(t *testing.T) {
+	orig := flagLines
+	flagLines = -5
+	defer func() { flagLines = orig }()
+
+	err := run(rootCmd, []string{"/dev/null"})
+	if err == nil {
+		t.Fatal("expected error for --lines=-5, got nil")
+	}
+	if !strings.Contains(err.Error(), "lines") {
+		t.Errorf("error should mention 'lines', got: %v", err)
+	}
+}
+
 // helpers
 
 func assertLines(t *testing.T, got, want []string) {
