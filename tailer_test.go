@@ -43,6 +43,41 @@ func (c *captureWriter) snapshot() []string {
 
 // --- lastNLines ---
 
+// limitedReadSeeker wraps an io.ReadSeeker and returns an error if a single
+// Read call requests more than maxRead bytes. Used to verify lastNLines does
+// not allocate a large contiguous buffer for the forward pass.
+type limitedReadSeeker struct {
+	io.ReadSeeker
+	maxRead int
+}
+
+func (l *limitedReadSeeker) Read(p []byte) (int, error) {
+	if len(p) > l.maxRead {
+		return 0, fmt.Errorf("Read called with buffer size %d > max %d", len(p), l.maxRead)
+	}
+	return l.ReadSeeker.Read(p)
+}
+
+func TestLastNLines_NoLargeForwardAlloc(t *testing.T) {
+	// Build content where the last 10 lines alone exceed maxRead bytes,
+	// so a single io.ReadFull of the tail would exceed the limit, but
+	// streaming reads (bufio.Scanner) would not.
+	const maxRead = 4096
+	var sb strings.Builder
+	for i := 0; i < 200; i++ {
+		// Each line is ~500 bytes; last 10 lines ≈ 5000 > maxRead.
+		fmt.Fprintf(&sb, "line %04d %s\n", i, strings.Repeat("x", 490))
+	}
+	r := &limitedReadSeeker{ReadSeeker: strings.NewReader(sb.String()), maxRead: maxRead}
+	lines, err := lastNLines(r, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(lines) != 10 {
+		t.Fatalf("want 10 lines, got %d: %v", len(lines), lines)
+	}
+}
+
 func TestLastNLines_FewerThanN(t *testing.T) {
 	r := strings.NewReader("a\nb\nc\n")
 	lines, err := lastNLines(r, 10)

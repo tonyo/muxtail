@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -183,17 +182,14 @@ outer:
 		}
 	}
 
-	// Seek to startAbs and read the tail in one forward pass.
+	// Seek to startAbs and stream the tail forward through a scanner —
+	// avoids allocating a single buffer proportional to (size - startAbs).
 	if _, err := r.Seek(startAbs, io.SeekStart); err != nil {
 		return nil, err
 	}
-	data := make([]byte, size-startAbs)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
-	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	lines := make([]string, 0, 128)
+	scanner := bufio.NewScanner(r)
+	lines := make([]string, 0, min(n, 128))
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
