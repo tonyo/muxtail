@@ -162,7 +162,6 @@ func run(cmd *cobra.Command, args []string) error {
 	errCh := make(chan error, len(specs))
 	var wg sync.WaitGroup
 	for _, spec := range specs {
-		spec := spec
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

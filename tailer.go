@@ -207,6 +207,16 @@ outer:
 }
 
 // tailStdin reads lines from stdin and writes them with the given label.
+//
+// Known limitation: if the underlying reader (r) is a blocking pipe that
+// never closes (e.g. a terminal or a long-lived process), cancelling ctx
+// causes tailStdin to return but the scanner goroutine remains blocked
+// inside scanner.Scan(). The goroutine will only be released when r is
+// closed externally (e.g. the pipe writer exits or the OS closes stdin on
+// process exit). This is a fundamental Go limitation with blocking I/O —
+// there is no way to unblock a Read on a pipe without closing the fd.
+// For the typical muxtail use-case (SIGINT/SIGTERM), stdin is closed as
+// part of process shutdown so the leak is short-lived and acceptable.
 func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, scannerInitBuf), scannerMaxBuf)
