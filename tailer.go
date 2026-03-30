@@ -39,7 +39,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 
 	emitOffset, emitErr := emitLastN(spec.Path, n, spec.Label, w)
 	if emitErr != nil && (!retry || !os.IsNotExist(emitErr)) {
-		fmt.Fprintf(os.Stderr, "muxtail: %s: %v\n", spec.Path, emitErr)
+		w.WriteError(fmt.Sprintf("muxtail: %s: %v\n", spec.Path, emitErr))
 	}
 
 	if !follow {
@@ -93,7 +93,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 				return nil
 			}
 			if line.Err != nil {
-				fmt.Fprintf(os.Stderr, "muxtail: %s: %v\n", spec.Path, line.Err)
+				w.WriteError(fmt.Sprintf("muxtail: %s: %v\n", spec.Path, line.Err))
 				continue
 			}
 			w.WriteLine(spec.Label, line.Text)

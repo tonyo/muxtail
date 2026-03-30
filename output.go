@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 )
@@ -11,6 +12,7 @@ import (
 type Writer struct {
 	mu         sync.Mutex
 	w          io.Writer
+	e          io.Writer // stderr destination; if nil, os.Stderr is used
 	timestamps bool
 	nowFn      func() time.Time // if nil, uses time.Now
 }
@@ -28,4 +30,15 @@ func (w *Writer) WriteLine(label, line string) {
 	} else {
 		fmt.Fprintf(w.w, "%s%s\n", label, line)
 	}
+}
+
+// WriteError writes a diagnostic message to the error writer atomically.
+func (w *Writer) WriteError(msg string) {
+	e := w.e
+	if e == nil {
+		e = os.Stderr
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	fmt.Fprint(e, msg)
 }

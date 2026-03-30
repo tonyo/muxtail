@@ -204,6 +204,32 @@ func TestWriter_AtomicLines(t *testing.T) {
 	}
 }
 
+func TestWriter_WriteError_IsAtomic(t *testing.T) {
+	var errBuf bytes.Buffer
+	w := &Writer{w: io.Discard, e: &errBuf}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w.WriteError(fmt.Sprintf("muxtail: file%d: some error\n", i))
+		}()
+	}
+	wg.Wait()
+
+	lines := strings.Split(strings.TrimRight(errBuf.String(), "\n"), "\n")
+	if len(lines) != 100 {
+		t.Fatalf("want 100 error lines, got %d", len(lines))
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "muxtail:") {
+			t.Errorf("mangled error line: %q", l)
+		}
+	}
+}
+
 func TestWriter_Timestamps(t *testing.T) {
 	var buf bytes.Buffer
 	w := &Writer{w: &buf, timestamps: true}
