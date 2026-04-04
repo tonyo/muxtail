@@ -127,3 +127,35 @@ func TestChunkedLineReader_LargeLineSmallBuf(t *testing.T) {
 		t.Fatalf("got len=%d truncated=%v err=%v", len(line), truncated, err)
 	}
 }
+
+// zeroThenEOFReader returns (0, nil) on the first Read, then delegates to the
+// wrapped reader. This exercises the "zero bytes, no error" branch in ReadLine.
+type zeroThenEOFReader struct {
+	first bool
+	inner io.Reader
+}
+
+func (z *zeroThenEOFReader) Read(p []byte) (int, error) {
+	if !z.first {
+		z.first = true
+		return 0, nil
+	}
+	return z.inner.Read(p)
+}
+
+func TestChunkedLineReader_ZeroBytesNoError(t *testing.T) {
+	// A Read that returns (0, nil) should be treated as transient EOF, not a spin.
+	r := newChunkedLineReader(&zeroThenEOFReader{inner: strings.NewReader("hi\n")}, 32, 10<<20)
+
+	// First call hits (0, nil) → returns io.EOF so caller can wait.
+	_, _, err := r.ReadLine()
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("expected io.EOF from zero-byte read, got %v", err)
+	}
+
+	// Second call gets real data.
+	line, truncated, err := r.ReadLine()
+	if err != nil || truncated || line != "hi" {
+		t.Fatalf("got (%q, %v, %v), want (\"hi\", false, nil)", line, truncated, err)
+	}
+}
