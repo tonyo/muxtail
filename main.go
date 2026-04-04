@@ -168,9 +168,14 @@ func run(cmd *cobra.Command, args []string) error {
 		go func() {
 			defer wg.Done()
 			if spec.Path == "-" {
-				errCh <- tailStdin(ctx, os.Stdin, spec.Label, writer)
+				errCh <- tailStdin(ctx, os.Stdin, spec.Label, writer, tailOptions{maxLineBytes: flagMaxLineBytes})
 			} else {
-				errCh <- tailFileWithOptions(ctx, spec, flagLines, flagFollow || flagRetry, flagRetry, writer, tailOptions{maxLineBytes: flagMaxLineBytes})
+				errCh <- tailFile(ctx, spec, writer, tailOptions{
+					initialLines: flagLines,
+					follow:       flagFollow || flagRetry,
+					retry:        flagRetry,
+					maxLineBytes: flagMaxLineBytes,
+				})
 			}
 		}()
 	}

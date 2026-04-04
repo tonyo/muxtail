@@ -374,7 +374,7 @@ func TestTailFile_Follow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		_ = tailFile(ctx, spec, 0, true, false, w)
+		_ = tailFile(ctx, spec, w, tailOptions{follow: true})
 		close(done)
 	}()
 
@@ -430,7 +430,7 @@ func TestTailFile_NoFollow(t *testing.T) {
 	ctx := context.Background()
 	done := make(chan struct{})
 	go func() {
-		_ = tailFile(ctx, spec, 3, false, false, w)
+		_ = tailFile(ctx, spec, w, tailOptions{initialLines: 3})
 		close(done)
 	}()
 
@@ -460,7 +460,7 @@ func TestTailFile_FollowMissingFile(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- tailFile(ctx, spec, 0, true, false, w)
+		done <- tailFile(ctx, spec, w, tailOptions{follow: true})
 	}()
 
 	select {
@@ -483,7 +483,7 @@ func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- tailFile(ctx, spec, 0, true, true, w)
+		done <- tailFile(ctx, spec, w, tailOptions{follow: true, retry: true})
 	}()
 
 	// Give tailer time to start watching.
@@ -518,7 +518,7 @@ func TestTailFile_FollowRetry(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- tailFile(ctx, spec, 0, true, true, w)
+		done <- tailFile(ctx, spec, w, tailOptions{follow: true, retry: true})
 	}()
 
 	// Should NOT return immediately — it blocks watching for the file.
@@ -554,7 +554,7 @@ func TestTailFile_FollowRetry_NoStderrOnMissingFile(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- tailFile(ctx, spec, 0, true, true, w)
+		done <- tailFile(ctx, spec, w, tailOptions{follow: true, retry: true})
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -606,7 +606,7 @@ func TestTailFile_FollowDoesNotMissLinesBetweenEmitAndFollow(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, 5, true, false, cap.writer())
+		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, cap.writer(), tailOptions{initialLines: 5, follow: true})
 	}()
 
 	countRace := func() bool {
@@ -642,7 +642,7 @@ func TestTailFile_FollowWithInitialLines(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, 5, true, false, cap.writer())
+		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, cap.writer(), tailOptions{initialLines: 5, follow: true})
 	}()
 
 	waitFor(3*time.Second, func() bool { return len(cap.snapshot()) >= 5 })
@@ -773,7 +773,7 @@ func TestTailStdin(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		_ = tailStdin(ctx, r, "[in] ", cap.writer())
+		_ = tailStdin(ctx, r, "[in] ", cap.writer(), tailOptions{})
 		close(done)
 	}()
 
@@ -804,7 +804,7 @@ func TestTailStdin_CancelMidStream(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		_ = tailStdin(ctx, pr, "[in] ", cap.writer())
+		_ = tailStdin(ctx, pr, "[in] ", cap.writer(), tailOptions{})
 		close(done)
 	}()
 
@@ -838,7 +838,7 @@ func TestTailStdin_LongLine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		_ = tailStdin(ctx, r, "", cap.writer())
+		_ = tailStdin(ctx, r, "", cap.writer(), tailOptions{})
 		close(done)
 	}()
 
@@ -854,6 +854,30 @@ func TestTailStdin_LongLine(t *testing.T) {
 	}
 	if lines[0] != longLine {
 		t.Errorf("long line was truncated: got len %d, want %d", len(lines[0]), len(longLine))
+	}
+}
+
+func TestTailStdin_RespectsMaxLineBytes(t *testing.T) {
+	// A line exceeding maxLineBytes should be rejected (scanner ErrTooLong propagated).
+	longLine := strings.Repeat("z", 500) + "\n"
+	r := strings.NewReader(longLine)
+
+	cap := &captureWriter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tailStdin(ctx, r, "", cap.writer(), tailOptions{maxLineBytes: 100})
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected ErrTooLong error, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tailStdin did not return after reader exhausted")
 	}
 }
 
@@ -982,7 +1006,7 @@ func TestTailFile_MultipleErrorsAllReported(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errCh <- tailFile(ctx, spec, 10, true, false, &Writer{w: io.Discard})
+			errCh <- tailFile(ctx, spec, &Writer{w: io.Discard}, tailOptions{initialLines: 10, follow: true})
 		}()
 	}
 	wg.Wait()
@@ -1037,7 +1061,7 @@ func TestTailFile_InitialLines_MaxLineBytesUnified(t *testing.T) {
 	w := &Writer{w: &stdout, e: &stderr}
 	spec := FileSpec{Path: f.Name(), Label: ""}
 
-	err = tailFileWithOptions(context.Background(), spec, 10, false, false, w, tailOptions{maxLineBytes: 100})
+	err = tailFile(context.Background(), spec, w, tailOptions{initialLines: 10, maxLineBytes: 100})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1227,7 +1251,7 @@ func TestTailFile_Follow_LongLineTruncated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		_ = tailFileWithOptions(ctx, spec, 0, true, false, w, tailOptions{maxLineBytes: 100})
+		_ = tailFile(ctx, spec, w, tailOptions{follow: true, maxLineBytes: 100})
 		close(done)
 	}()
 

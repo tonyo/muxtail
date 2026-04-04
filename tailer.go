@@ -18,11 +18,7 @@ import (
 const (
 	// scannerInitBuf is the initial buffer size for line scanners.
 	scannerInitBuf = 64 * 1024
-	// scannerMaxBuf is the maximum line size a scanner will accept.
-	// Lines longer than this are treated as errors.
-	scannerMaxBuf = 1024 * 1024
-
-	// defaultMaxLineBytes is the default cap for per-line memory in the follow phase.
+	// defaultMaxLineBytes is the default cap for per-line memory.
 	defaultMaxLineBytes = 10 * 1024 * 1024
 
 	// followReadBufSize is the size of the fixed read buffer used by chunkedLineReader
@@ -30,20 +26,18 @@ const (
 	followReadBufSize = 32 * 1024
 )
 
-// tailOptions configures optional behaviour for tailFileWithOptions.
+// tailOptions configures the behaviour of tailFile and tailStdin.
 type tailOptions struct {
+	initialLines int  // number of lines to emit at startup; 0 means none
+	follow       bool // continue tailing after initial lines
+	retry        bool // retry if file is missing (implies follow)
 	// maxLineBytes caps the memory used per line in the follow phase.
 	// 0 means use defaultMaxLineBytes.
 	maxLineBytes int
 }
 
-// tailFile is the public entry point; it calls tailFileWithOptions with defaults.
-func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *Writer) error {
-	return tailFileWithOptions(ctx, spec, n, follow, retry, w, tailOptions{})
-}
-
-func tailFileWithOptions(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *Writer, opts tailOptions) error {
-	if follow && !retry {
+func tailFile(ctx context.Context, spec FileSpec, w *Writer, opts tailOptions) error {
+	if opts.follow && !opts.retry {
 		if _, err := os.Stat(spec.Path); err != nil {
 			return fmt.Errorf("%s: %w", spec.Path, err)
 		}
@@ -62,12 +56,12 @@ func tailFileWithOptions(ctx context.Context, spec FileSpec, n int, follow, retr
 		inode1 = fileInode(fi)
 	}
 
-	emitOffset, emitErr := emitLastN(spec.Path, n, spec.Label, w, maxLine)
-	if emitErr != nil && (!retry || !os.IsNotExist(emitErr)) {
+	emitOffset, emitErr := emitLastN(spec.Path, opts.initialLines, spec.Label, w, maxLine)
+	if emitErr != nil && (!opts.retry || !os.IsNotExist(emitErr)) {
 		w.WriteError(fmt.Sprintf("muxtail: %s: %v\n", spec.Path, emitErr))
 	}
 
-	if !follow {
+	if !opts.follow {
 		return nil
 	}
 
@@ -81,7 +75,7 @@ func tailFileWithOptions(ctx context.Context, spec FileSpec, n int, follow, retr
 	//   - Same inode, smaller size: truncated in-place → start at new EOF
 	//   - File doesn't exist yet (retry mode): start at 0
 	seekOffset := emitOffset
-	if retry {
+	if opts.retry {
 		if _, statErr := os.Stat(spec.Path); os.IsNotExist(statErr) {
 			seekOffset = 0
 		}
@@ -98,7 +92,7 @@ func tailFileWithOptions(ctx context.Context, spec FileSpec, n int, follow, retr
 		ctx,
 		spec.Path,
 		seekOffset,
-		retry,
+		opts.retry,
 		maxLine,
 		func(line string) error {
 			return w.WriteLine(spec.Label, line)
@@ -355,9 +349,13 @@ outer:
 // there is no way to unblock a Read on a pipe without closing the fd.
 // For the typical muxtail use-case (SIGINT/SIGTERM), stdin is closed as
 // part of process shutdown so the leak is short-lived and acceptable.
-func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer) error {
+func tailStdin(ctx context.Context, r io.Reader, label string, w *Writer, opts tailOptions) error {
+	maxLine := opts.maxLineBytes
+	if maxLine <= 0 {
+		maxLine = defaultMaxLineBytes
+	}
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, scannerInitBuf), scannerMaxBuf)
+	scanner.Buffer(make([]byte, min(scannerInitBuf, maxLine)), maxLine)
 	lines := make(chan string)
 	done := make(chan struct{})
 
