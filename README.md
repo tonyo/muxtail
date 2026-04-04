@@ -22,7 +22,8 @@ Pass `-` or omit files to read from stdin.
 | `--prefix` | `-p` | `none` | Auto-label mode: `none`, `basename`, `abspath` |
 | `--label` | `-l` | — | Per-file label (repeatable, positional) |
 | `--ts` | `-T` | off | Prepend each line with a timestamp |
-| `--no-color` | — | off | Disable colored labels |
+| `--no-color` | — | off | Disable colored labels (also respects `NO_COLOR` env var) |
+| `--max-line-bytes` | — | `10485760` | Maximum line size in bytes; longer lines are truncated |
 
 ## Examples
 
@@ -66,7 +67,7 @@ muxtail --no-color -p basename app.log db.log | grep ERROR
 app.log:ERROR connection refused
 db.log:ERROR timeout after 30s
 ```
-Colors are also suppressed automatically when stdout is not a terminal.
+Colors are also suppressed automatically when stdout is not a terminal, or when the `NO_COLOR` environment variable is set.
 
 **Tail stdin:**
 ```
