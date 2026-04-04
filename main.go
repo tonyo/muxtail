@@ -20,13 +20,14 @@ type FileSpec struct {
 }
 
 var (
-	flagLines      int
-	flagFollow     bool
-	flagRetry      bool
-	flagPrefix     string
-	flagLabels     []string
-	flagTimestamps bool
-	flagNoColor    bool
+	flagLines        int
+	flagFollow       bool
+	flagRetry        bool
+	flagPrefix       string
+	flagLabels       []string
+	flagTimestamps   bool
+	flagNoColor      bool
+	flagMaxLineBytes int
 )
 
 var ansiColors = []string{
@@ -71,6 +72,7 @@ func init() {
 	rootCmd.Flags().StringArrayVarP(&flagLabels, "label", "l", nil, "per-file label (repeatable, positional)")
 	rootCmd.Flags().BoolVarP(&flagTimestamps, "ts", "T", false, "prepend each line with a timestamp")
 	rootCmd.Flags().BoolVar(&flagNoColor, "no-color", false, "disable colored labels")
+	rootCmd.Flags().IntVar(&flagMaxLineBytes, "max-line-bytes", defaultMaxLineBytes, "maximum line size in bytes for the follow phase; longer lines are truncated")
 }
 
 // resolveLabel returns the prefix string for a file given a mode.
@@ -168,7 +170,7 @@ func run(cmd *cobra.Command, args []string) error {
 			if spec.Path == "-" {
 				errCh <- tailStdin(ctx, os.Stdin, spec.Label, writer)
 			} else {
-				errCh <- tailFile(ctx, spec, flagLines, flagFollow || flagRetry, flagRetry, writer)
+				errCh <- tailFileWithOptions(ctx, spec, flagLines, flagFollow || flagRetry, flagRetry, writer, tailOptions{maxLineBytes: flagMaxLineBytes})
 			}
 		}()
 	}

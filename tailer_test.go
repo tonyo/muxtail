@@ -68,7 +68,7 @@ func TestLastNLines_NoLargeForwardAlloc(t *testing.T) {
 		fmt.Fprintf(&sb, "line %04d %s\n", i, strings.Repeat("x", 700))
 	}
 	r := &limitedReadSeeker{ReadSeeker: strings.NewReader(sb.String()), maxRead: scannerInitBuf}
-	lines, err := lastNLines(r, 100)
+	lines, err := lastNLines(r, 100, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestLastNLines_NoLargeForwardAlloc(t *testing.T) {
 
 func TestLastNLines_FewerThanN(t *testing.T) {
 	r := strings.NewReader("a\nb\nc\n")
-	lines, err := lastNLines(r, 10)
+	lines, err := lastNLines(r, 10, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestLastNLines_FewerThanN(t *testing.T) {
 
 func TestLastNLines_ExactlyN(t *testing.T) {
 	r := strings.NewReader("a\nb\nc\n")
-	lines, err := lastNLines(r, 3)
+	lines, err := lastNLines(r, 3, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestLastNLines_ExactlyN(t *testing.T) {
 
 func TestLastNLines_MoreThanN(t *testing.T) {
 	r := strings.NewReader("a\nb\nc\nd\ne\n")
-	lines, err := lastNLines(r, 3)
+	lines, err := lastNLines(r, 3, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestLastNLines_MoreThanN(t *testing.T) {
 
 func TestLastNLines_Empty(t *testing.T) {
 	r := strings.NewReader("")
-	lines, err := lastNLines(r, 5)
+	lines, err := lastNLines(r, 5, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestLastNLines_Empty(t *testing.T) {
 
 func TestLastNLines_ZeroN(t *testing.T) {
 	r := strings.NewReader("a\nb\n")
-	lines, err := lastNLines(r, 0)
+	lines, err := lastNLines(r, 0, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestLastNLines_LongLine(t *testing.T) {
 	longLine := strings.Repeat("x", 200*1024) // 200 KB
 	input := "before\n" + longLine + "\nafter\n"
 	r := strings.NewReader(input)
-	lines, err := lastNLines(r, 3)
+	lines, err := lastNLines(r, 3, 1024*1024)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,6 +144,17 @@ func TestLastNLines_LongLine(t *testing.T) {
 	}
 }
 
+func TestLastNLines_RespectsMaxLine(t *testing.T) {
+	// With maxLine=100, a 200-byte line should cause ErrTooLong.
+	longLine := strings.Repeat("x", 200)
+	input := "before\n" + longLine + "\nafter\n"
+	r := strings.NewReader(input)
+	_, err := lastNLines(r, 3, 100)
+	if err == nil {
+		t.Fatal("expected error for line exceeding maxLine, got nil")
+	}
+}
+
 func TestLastNLines_LargeFile(t *testing.T) {
 	// Build a file larger than the 4096-byte chunk size.
 	var sb strings.Builder
@@ -152,7 +163,7 @@ func TestLastNLines_LargeFile(t *testing.T) {
 		fmt.Fprintf(&sb, "line %04d\n", i)
 	}
 	r := strings.NewReader(sb.String())
-	lines, err := lastNLines(r, 10)
+	lines, err := lastNLines(r, 10, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +180,7 @@ func TestLastNLines_LargeFile(t *testing.T) {
 
 func TestLastNLines_NoTrailingNewline(t *testing.T) {
 	r := strings.NewReader("a\nb\nc")
-	lines, err := lastNLines(r, 2)
+	lines, err := lastNLines(r, 2, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +330,7 @@ func TestEmitLastN(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	if _, err := emitLastN(f.Name(), 5, "[x] ", w); err != nil {
+	if _, err := emitLastN(f.Name(), 5, "[x] ", w, defaultMaxLineBytes); err != nil {
 		t.Fatal(err)
 	}
 
@@ -339,7 +350,7 @@ func TestEmitLastN(t *testing.T) {
 func TestEmitLastN_MissingFile(t *testing.T) {
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	_, err := emitLastN("/nonexistent/path.log", 5, "[x] ", w)
+	_, err := emitLastN("/nonexistent/path.log", 5, "[x] ", w, defaultMaxLineBytes)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -380,14 +391,7 @@ func TestTailFile_Follow(t *testing.T) {
 	}
 	f2.Close()
 
-	// Wait for lines to be picked up.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(cap.snapshot()) >= 3 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitFor(3*time.Second, func() bool { return len(cap.snapshot()) >= 3 })
 
 	cancel()
 	<-done
@@ -491,13 +495,7 @@ func TestTailFile_FollowRetry_FirstWriteVisible(t *testing.T) {
 	}
 
 	// Wait for the first line to appear.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if lines := cap.snapshot(); len(lines) >= 1 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitFor(3*time.Second, func() bool { return len(cap.snapshot()) >= 1 })
 
 	cancel()
 	<-done
@@ -611,20 +609,19 @@ func TestTailFile_FollowDoesNotMissLinesBetweenEmitAndFollow(t *testing.T) {
 		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, 5, true, false, cap.writer())
 	}()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	countRace := func() bool {
 		var found int
 		for _, l := range cap.snapshot() {
 			if strings.HasPrefix(l, "racewindow ") {
 				found++
 			}
 		}
-		if found == 3 {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+		return found == 3
 	}
-	t.Fatal("expected all 3 race-window lines to appear in follow output, but they were skipped")
+	waitFor(3*time.Second, countRace)
+	if !countRace() {
+		t.Fatal("expected all 3 race-window lines to appear in follow output, but they were skipped")
+	}
 }
 
 func TestTailFile_FollowWithInitialLines(t *testing.T) {
@@ -648,14 +645,7 @@ func TestTailFile_FollowWithInitialLines(t *testing.T) {
 		_ = tailFile(ctx, FileSpec{Path: path, Label: ""}, 5, true, false, cap.writer())
 	}()
 
-	// Wait for the 5 initial lines (lines 6-10).
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(cap.snapshot()) >= 5 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitFor(3*time.Second, func() bool { return len(cap.snapshot()) >= 5 })
 	initial := cap.snapshot()
 	if len(initial) != 5 {
 		t.Fatalf("want 5 initial lines, got %d: %v", len(initial), initial)
@@ -676,13 +666,7 @@ func TestTailFile_FollowWithInitialLines(t *testing.T) {
 	}
 	f2.Close()
 
-	deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(cap.snapshot()) >= 8 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitFor(3*time.Second, func() bool { return len(cap.snapshot()) >= 8 })
 	all := cap.snapshot()
 	if len(all) != 8 {
 		t.Fatalf("want 8 total lines (5 initial + 3 new), got %d: %v", len(all), all)
@@ -705,7 +689,7 @@ func TestEmitLastN_ZeroNReturnsOffset(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	offset, err := emitLastN(path, 0, "", w)
+	offset, err := emitLastN(path, 0, "", w, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,7 +717,7 @@ func TestEmitLastN_ReturnsOffset(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	offset, err := emitLastN(path, 3, "", w)
+	offset, err := emitLastN(path, 3, "", w, defaultMaxLineBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -826,14 +810,7 @@ func TestTailStdin_CancelMidStream(t *testing.T) {
 
 	fmt.Fprintln(pw, "hello")
 
-	// Wait for the line to arrive then cancel.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(cap.snapshot()) >= 1 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitFor(2*time.Second, func() bool { return len(cap.snapshot()) >= 1 })
 	cancel()
 
 	select {
@@ -977,7 +954,7 @@ func TestEmitLastN_WithLabel(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := &Writer{w: &buf}
-	if _, err := emitLastN(f.Name(), 1, "app.log:", w); err != nil {
+	if _, err := emitLastN(f.Name(), 1, "app.log:", w, defaultMaxLineBytes); err != nil {
 		t.Fatal(err)
 	}
 	got := strings.TrimRight(buf.String(), "\n")
@@ -1043,7 +1020,265 @@ func TestRun_NegativeLines_ReturnsError(t *testing.T) {
 	}
 }
 
+func TestTailFile_InitialLines_MaxLineBytesUnified(t *testing.T) {
+	// Verify that --max-line-bytes applies to the initial -n phase as well.
+	// A line exceeding maxLineBytes in the initial output causes an error message,
+	// not a crash; tailFileWithOptions returns nil.
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "muxtail*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, strings.Repeat("A", 300))
+	fmt.Fprintln(f, "normal")
+	f.Close()
+
+	var stdout, stderr bytes.Buffer
+	w := &Writer{w: &stdout, e: &stderr}
+	spec := FileSpec{Path: f.Name(), Label: ""}
+
+	err = tailFileWithOptions(context.Background(), spec, 10, false, false, w, tailOptions{maxLineBytes: 100})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "muxtail:") {
+		t.Errorf("expected error message on stderr, got stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// --- followWithChunkedReader ---
+
+func TestFollowWithChunkedReader_BasicLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte("line1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	onLine := func(line string) error {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- followWithChunkedReader(ctx, path, 6, false, 10<<20, onLine, func(string) {})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, "line2")
+	f.Close()
+
+	waitFor(3*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(lines) >= 1 })
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) == 0 || lines[0] != "line2" {
+		t.Errorf("got %v, want [\"line2\"]", lines)
+	}
+}
+
+func TestFollowWithChunkedReader_ContextCancel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- followWithChunkedReader(ctx, path, 0, false, 10<<20,
+			func(string) error { return nil },
+			func(string) {},
+		)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("followWithChunkedReader did not stop on context cancel")
+	}
+}
+
+func TestFollowWithChunkedReader_TruncationWarning(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "warn.log")
+	if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var warnings []string
+	onError := func(msg string) {
+		mu.Lock()
+		warnings = append(warnings, msg)
+		mu.Unlock()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		followWithChunkedReader(ctx, path, 0, false, 100,
+			func(string) error { return nil },
+			onError,
+		)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, strings.Repeat("A", 500))
+	f.Close()
+
+	waitFor(3*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(warnings) >= 1 })
+	cancel()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(warnings) == 0 {
+		t.Fatal("expected a truncation warning")
+	}
+	if !strings.Contains(warnings[0], "truncated") {
+		t.Errorf("warning does not mention truncation: %q", warnings[0])
+	}
+}
+
+func TestFollowWithChunkedReader_Rotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(path, []byte("pre-rotation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	onLine := func(line string) error {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- followWithChunkedReader(ctx, path, 13, true, 10<<20, onLine, func(string) {})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("post-rotation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(5*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(lines) >= 1 })
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) == 0 || lines[0] != "post-rotation" {
+		t.Errorf("expected [\"post-rotation\"], got %v", lines)
+	}
+}
+
+func TestTailFile_Follow_LongLineTruncated(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "muxtail*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := f.Name()
+	f.Close()
+
+	cap := &captureWriter{}
+	w := cap.writer()
+	spec := FileSpec{Path: name, Label: ""}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = tailFileWithOptions(ctx, spec, 0, true, false, w, tailOptions{maxLineBytes: 100})
+		close(done)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	f2, err := os.OpenFile(name, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f2, "short line")
+	fmt.Fprintln(f2, strings.Repeat("Z", 500))
+	fmt.Fprintln(f2, "after long")
+	f2.Close()
+
+	waitFor(3*time.Second, func() bool { return len(cap.snapshot()) >= 3 })
+
+	cancel()
+	<-done
+
+	lines := cap.snapshot()
+	if len(lines) < 3 {
+		t.Fatalf("want at least 3 lines, got %d: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "short line") {
+		t.Errorf("line 0: want 'short line', got %q", lines[0])
+	}
+	zContent := strings.TrimPrefix(lines[1], spec.Label)
+	if len(zContent) != 100 {
+		t.Errorf("line 1: want 100 bytes, got %d: %q", len(zContent), zContent[:min(40, len(zContent))])
+	}
+	if strings.Contains(lines[1], strings.Repeat("Z", 101)) {
+		t.Errorf("line 1: was not truncated at 100 bytes")
+	}
+	if !strings.Contains(lines[2], "after long") {
+		t.Errorf("line 2: want 'after long', got %q", lines[2])
+	}
+}
+
 // helpers
+
+// waitFor polls cond every 20ms until it returns true or timeout elapses.
+// It does not fail the test on timeout; callers assert the expected state after.
+func waitFor(timeout time.Duration, cond func() bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 
 func assertLines(t *testing.T, got, want []string) {
 	t.Helper()

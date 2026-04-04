@@ -3,11 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/nxadm/tail"
+	tomb "gopkg.in/tomb.v1"
 )
 
 // tailFile tails a regular file: first emit last N lines, then follow if follow==true.
@@ -20,9 +21,28 @@ const (
 	// scannerMaxBuf is the maximum line size a scanner will accept.
 	// Lines longer than this are treated as errors.
 	scannerMaxBuf = 1024 * 1024
+
+	// defaultMaxLineBytes is the default cap for per-line memory in the follow phase.
+	defaultMaxLineBytes = 10 * 1024 * 1024
+
+	// followReadBufSize is the size of the fixed read buffer used by chunkedLineReader
+	// in the follow phase.
+	followReadBufSize = 32 * 1024
 )
 
+// tailOptions configures optional behaviour for tailFileWithOptions.
+type tailOptions struct {
+	// maxLineBytes caps the memory used per line in the follow phase.
+	// 0 means use defaultMaxLineBytes.
+	maxLineBytes int
+}
+
+// tailFile is the public entry point; it calls tailFileWithOptions with defaults.
 func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *Writer) error {
+	return tailFileWithOptions(ctx, spec, n, follow, retry, w, tailOptions{})
+}
+
+func tailFileWithOptions(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *Writer, opts tailOptions) error {
 	if follow && !retry {
 		if _, err := os.Stat(spec.Path); err != nil {
 			return fmt.Errorf("%s: %w", spec.Path, err)
@@ -31,13 +51,18 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 
 	// Record the file's inode and size before emitLastN so we can detect
 	// truncation or rotation that occurs between emitLastN closing the file
-	// and nxadm/tail opening it.
+	// and the follow phase opening it.
+	maxLine := opts.maxLineBytes
+	if maxLine <= 0 {
+		maxLine = defaultMaxLineBytes
+	}
+
 	var inode1 uint64
 	if fi, err := os.Stat(spec.Path); err == nil {
 		inode1 = fileInode(fi)
 	}
 
-	emitOffset, emitErr := emitLastN(spec.Path, n, spec.Label, w)
+	emitOffset, emitErr := emitLastN(spec.Path, n, spec.Label, w, maxLine)
 	if emitErr != nil && (!retry || !os.IsNotExist(emitErr)) {
 		w.WriteError(fmt.Sprintf("muxtail: %s: %v\n", spec.Path, emitErr))
 	}
@@ -46,17 +71,16 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 		return nil
 	}
 
-	// Determine where nxadm/tail should start reading.
+	// Determine where the follow phase should start reading.
 	//
 	// Default: absolute byte offset recorded by emitLastN (avoids missing lines
-	// written between emitLastN closing the file and nxadm/tail opening it).
+	// written between emitLastN closing the file and the follow phase opening it).
 	//
 	// Adjustments based on what happened while emitLastN was running:
 	//   - Different inode: file was replaced (log rotation) → start at 0
 	//   - Same inode, smaller size: truncated in-place → start at new EOF
 	//   - File doesn't exist yet (retry mode): start at 0
 	seekOffset := emitOffset
-	seekWhence := io.SeekStart
 	if retry {
 		if _, statErr := os.Stat(spec.Path); os.IsNotExist(statErr) {
 			seekOffset = 0
@@ -70,35 +94,145 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 		}
 	}
 
-	t, err := tail.TailFile(spec.Path, tail.Config{
-		Follow:        true,
-		ReOpen:        true,
-		MustExist:     !retry,
-		Location:      &tail.SeekInfo{Offset: seekOffset, Whence: seekWhence},
-		Logger:        tail.DiscardingLogger,
-		CompleteLines: true,
-	})
+	return followWithChunkedReader(
+		ctx,
+		spec.Path,
+		seekOffset,
+		retry,
+		maxLine,
+		func(line string) error {
+			return w.WriteLine(spec.Label, line)
+		},
+		func(msg string) {
+			w.WriteError(msg)
+		},
+	)
+}
+
+// followWithChunkedReader tails path starting at seekOffset using a chunkedLineReader.
+// It uses the nxadm/tail watch package for inotify/polling events and reads the file
+// directly, capping per-line memory at maxLineBytes. Lines exceeding the cap are
+// truncated: onLine is called with truncated=true, then onError is called with a
+// warning message. Callers should use onError to forward warnings to the user.
+//
+// followWithChunkedReader handles log rotation (file replaced: Deleted event) and
+// in-place truncation (Truncated event) by reopening the file and resetting the reader.
+//
+// Context cancellation causes the function to return nil promptly.
+func followWithChunkedReader(
+	ctx context.Context,
+	path string,
+	seekOffset int64,
+	retry bool,
+	maxLineBytes int,
+	onLine func(line string) error,
+	onError func(msg string),
+) error {
+	var t tomb.Tomb
+	defer t.Kill(nil) // unblocks bridge goroutine on any return path
+	go func() {
+		select {
+		case <-ctx.Done():
+			t.Kill(nil)
+		case <-t.Dead():
+		}
+	}()
+
+	for {
+		err := followOnce(ctx, &t, path, seekOffset, retry, maxLineBytes, onLine, onError)
+		if errors.Is(err, errRetryOpen) {
+			// File was deleted; retry mode: wait for it to reappear.
+			seekOffset = 0
+			watcher := newFileWatcher(path)
+			if waitErr := watcher.BlockUntilExists(&t); waitErr != nil {
+				// tomb was killed (ctx cancelled or other death).
+				return nil
+			}
+			continue
+		}
+		return err
+	}
+}
+
+// errRetryOpen is a sentinel returned by followOnce when the file was deleted
+// and the caller should wait for it to reappear (retry mode).
+var errRetryOpen = errors.New("file deleted, retry")
+
+// followOnce runs a single follow session on path from seekOffset.
+// Returns errRetryOpen when the file is deleted and retry==true.
+// Returns nil when ctx is cancelled or follow==false-deleted.
+func followOnce(
+	ctx context.Context,
+	t *tomb.Tomb,
+	path string,
+	seekOffset int64,
+	retry bool,
+	maxLineBytes int,
+	onLine func(line string) error,
+	onError func(msg string),
+) error {
+	f, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) && retry {
+			return errRetryOpen
+		}
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(seekOffset, io.SeekStart); err != nil {
 		return err
 	}
 
+	watcher := newFileWatcher(path)
+	changes, err := watcher.ChangeEvents(t, seekOffset)
+	if err != nil {
+		return nil // tomb was killed
+	}
+
+	reader := newChunkedLineReader(f, followReadBufSize, maxLineBytes)
+
 	for {
+		line, truncated, readErr := reader.ReadLine()
+		if readErr == nil {
+			if truncated {
+				onError(fmt.Sprintf("muxtail: %s: line truncated at %d bytes\n", path, maxLineBytes))
+			}
+			if err := onLine(line); err != nil {
+				return err
+			}
+			continue
+		}
+		if !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+
+		// No complete line yet — wait for a file-change event.
 		select {
 		case <-ctx.Done():
-			t.Stop()
-			t.Cleanup()
 			return nil
-		case line, ok := <-t.Lines:
+		case <-t.Dying():
+			return nil
+		case _, ok := <-changes.Modified:
 			if !ok {
 				return nil
 			}
-			if line.Err != nil {
-				w.WriteError(fmt.Sprintf("muxtail: %s: %v\n", spec.Path, line.Err))
-				continue
+		case _, ok := <-changes.Truncated:
+			if !ok {
+				return nil
 			}
-			if err := w.WriteLine(spec.Label, line.Text); err != nil {
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
+			reader = newChunkedLineReader(f, followReadBufSize, maxLineBytes)
+		case _, ok := <-changes.Deleted:
+			if !ok {
+				return nil
+			}
+			if retry {
+				return errRetryOpen
+			}
+			return nil
 		}
 	}
 }
@@ -106,7 +240,7 @@ func tailFile(ctx context.Context, spec FileSpec, n int, follow, retry bool, w *
 // emitLastN reads the last n lines of a file and writes them.
 // It returns the byte offset at which it stopped reading (the file size at open
 // time), so the caller can resume following from exactly that position.
-func emitLastN(path string, n int, label string, w *Writer) (int64, error) {
+func emitLastN(path string, n int, label string, w *Writer, maxLine int) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
@@ -122,7 +256,7 @@ func emitLastN(path string, n int, label string, w *Writer) (int64, error) {
 		return size, nil
 	}
 
-	lines, err := lastNLines(f, n)
+	lines, err := lastNLines(f, n, maxLine)
 	if err != nil {
 		return 0, err
 	}
@@ -135,7 +269,7 @@ func emitLastN(path string, n int, label string, w *Writer) (int64, error) {
 }
 
 // lastNLines returns up to n lines from the end of r.
-func lastNLines(r io.ReadSeeker, n int) ([]string, error) {
+func lastNLines(r io.ReadSeeker, n int, maxLine int) ([]string, error) {
 	const chunkSize = 4096
 
 	size, err := r.Seek(0, io.SeekEnd)
@@ -202,7 +336,7 @@ outer:
 	}
 
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, scannerInitBuf), scannerMaxBuf)
+	scanner.Buffer(make([]byte, min(scannerInitBuf, maxLine)), maxLine)
 	lines := make([]string, 0, min(n, 128))
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
