@@ -1290,6 +1290,74 @@ func TestTailFile_Follow_LongLineTruncated(t *testing.T) {
 	}
 }
 
+func TestFollowWithChunkedReader_InPlaceTruncation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "trunc.log")
+	if err := os.WriteFile(path, []byte("old-line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var lines []string
+	onLine := func(line string) error {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		// Start following from EOF (offset 9, past "old-line\n").
+		done <- followWithChunkedReader(ctx, path, 9, false, 10<<20, onLine, func(string) {})
+	}()
+
+	// Wait for the watcher to be established.
+	time.Sleep(100 * time.Millisecond)
+
+	// Append a line so we have something to read first.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f, "before-truncation")
+	f.Close()
+
+	waitFor(3*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(lines) >= 1 })
+
+	// Truncate the file to zero.
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write new content after truncation.
+	f2, err := os.OpenFile(path, os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintln(f2, "after-truncation")
+	f2.Close()
+
+	waitFor(5*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(lines) >= 2 })
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) < 2 {
+		t.Fatalf("want at least 2 lines, got %v", lines)
+	}
+	if lines[0] != "before-truncation" {
+		t.Errorf("line 0: want %q, got %q", "before-truncation", lines[0])
+	}
+	if lines[1] != "after-truncation" {
+		t.Errorf("line 1: want %q, got %q", "after-truncation", lines[1])
+	}
+}
+
 // helpers
 
 // waitFor polls cond every 20ms until it returns true or timeout elapses.

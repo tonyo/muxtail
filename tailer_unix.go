@@ -5,8 +5,6 @@ package main
 import (
 	"os"
 	"syscall"
-
-	"github.com/nxadm/tail/watch"
 )
 
 func fileInode(fi os.FileInfo) uint64 {
@@ -14,8 +12,4 @@ func fileInode(fi os.FileInfo) uint64 {
 		return stat.Ino
 	}
 	return 0
-}
-
-func newFileWatcher(path string) watch.FileWatcher {
-	return watch.NewInotifyFileWatcher(path)
 }

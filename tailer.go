@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	tomb "gopkg.in/tomb.v1"
 )
 
 // tailFile tails a regular file: first emit last N lines, then follow if follow==true.
@@ -104,13 +102,12 @@ func tailFile(ctx context.Context, spec FileSpec, w *Writer, opts tailOptions) e
 }
 
 // followWithChunkedReader tails path starting at seekOffset using a chunkedLineReader.
-// It uses the nxadm/tail watch package for inotify/polling events and reads the file
-// directly, capping per-line memory at maxLineBytes. Lines exceeding the cap are
-// truncated: onLine is called with truncated=true, then onError is called with a
-// warning message. Callers should use onError to forward warnings to the user.
+// It uses fsnotify for file-system events and reads the file directly, capping
+// per-line memory at maxLineBytes. Lines exceeding the cap are truncated: onLine
+// is called with truncated=true, then onError is called with a warning message.
 //
 // followWithChunkedReader handles log rotation (file replaced: Deleted event) and
-// in-place truncation (Truncated event) by reopening the file and resetting the reader.
+// in-place truncation by reopening / resetting the reader as needed.
 //
 // Context cancellation causes the function to return nil promptly.
 func followWithChunkedReader(
@@ -122,24 +119,12 @@ func followWithChunkedReader(
 	onLine func(line string) error,
 	onError func(msg string),
 ) error {
-	var t tomb.Tomb
-	defer t.Kill(nil) // unblocks bridge goroutine on any return path
-	go func() {
-		select {
-		case <-ctx.Done():
-			t.Kill(nil)
-		case <-t.Dead():
-		}
-	}()
-
 	for {
-		err := followOnce(ctx, &t, path, seekOffset, retry, maxLineBytes, onLine, onError)
+		err := followOnce(ctx, path, seekOffset, retry, maxLineBytes, onLine, onError)
 		if errors.Is(err, errRetryOpen) {
 			// File was deleted; retry mode: wait for it to reappear.
 			seekOffset = 0
-			watcher := newFileWatcher(path)
-			if waitErr := watcher.BlockUntilExists(&t); waitErr != nil {
-				// tomb was killed (ctx cancelled or other death).
+			if waitErr := waitUntilExists(ctx, path); waitErr != nil {
 				return nil
 			}
 			continue
@@ -154,10 +139,9 @@ var errRetryOpen = errors.New("file deleted, retry")
 
 // followOnce runs a single follow session on path from seekOffset.
 // Returns errRetryOpen when the file is deleted and retry==true.
-// Returns nil when ctx is cancelled or follow==false-deleted.
+// Returns nil when ctx is cancelled or the file is deleted without retry.
 func followOnce(
 	ctx context.Context,
-	t *tomb.Tomb,
 	path string,
 	seekOffset int64,
 	retry bool,
@@ -178,10 +162,13 @@ func followOnce(
 		return err
 	}
 
-	watcher := newFileWatcher(path)
-	changes, err := watcher.ChangeEvents(t, seekOffset)
+	changes, err := watchFile(ctx, path)
 	if err != nil {
-		return nil // tomb was killed
+		// File may have been deleted between open and watch setup.
+		if retry {
+			return errRetryOpen
+		}
+		return nil
 	}
 
 	reader := newChunkedLineReader(f, followReadBufSize, maxLineBytes)
@@ -205,21 +192,19 @@ func followOnce(
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-t.Dying():
-			return nil
-		case _, ok := <-changes.Modified:
+		case _, ok := <-changes.modified:
 			if !ok {
 				return nil
 			}
-		case _, ok := <-changes.Truncated:
-			if !ok {
-				return nil
+			// Detect in-place truncation: file is now smaller than our read position.
+			pos, _ := f.Seek(0, io.SeekCurrent)
+			if fi, statErr := f.Stat(); statErr == nil && fi.Size() < pos {
+				if _, err := f.Seek(0, io.SeekStart); err != nil {
+					return err
+				}
+				reader = newChunkedLineReader(f, followReadBufSize, maxLineBytes)
 			}
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
-				return err
-			}
-			reader = newChunkedLineReader(f, followReadBufSize, maxLineBytes)
-		case _, ok := <-changes.Deleted:
+		case _, ok := <-changes.deleted:
 			if !ok {
 				return nil
 			}
