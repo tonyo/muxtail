@@ -108,6 +108,21 @@ Or build from source:
 go build -o muxtail .
 ```
 
+## Docker
+
+Images are published to [GitHub Container Registry](https://ghcr.io/tonyo/muxtail) for `linux/amd64` and `linux/arm64`:
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Latest release |
+| `1.2` | Minor version (e.g. `1.2.x`) |
+| `1.2.3` | Exact release |
+| `main` | Latest commit on main |
+
+```
+docker run --rm -v /var/log:/var/log ghcr.io/tonyo/muxtail -p basename /var/log/syslog
+```
+
 ## Notes
 
 **This project has been developed with AI assistance.**
