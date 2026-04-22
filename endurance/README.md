@@ -13,6 +13,7 @@ Long-running stability test for muxtail. Runs muxtail in `-F` (follow-retry) mod
 | `ROTATION_INTERVAL_SEC` | 300 | How often to rotate the log file (seconds) |
 | `METRICS_INTERVAL_SEC` | 60 | How often to sample CPU/RSS (seconds) |
 | `DURATION_SEC` | 30 | How long to run; `0` = indefinitely |
+| `OUTPUT` | `file` | muxtail output destination: `file` (saves to `muxtail.out`) or `null` (redirects to `/dev/null` to isolate disk I/O in metrics) |
 
 ## Examples
 
@@ -33,7 +34,7 @@ Each run creates a temp directory (printed at startup) containing:
 
 | File | Contents |
 |---|---|
-| `metrics.csv` | `timestamp, rss_kb, cpu_pct, sys_free_mb, load1` — one row per sample |
+| `metrics.csv` | `timestamp, rss_kb, vm_size_kb, vm_swap_kb, cpu_pct, threads, fd_count, write_bytes_delta, ctx_switches_delta, sys_free_mb, sys_swap_used_mb, load1` — one row per sample |
 | `events.log` | Timestamped log of rotations, process exits, OOM alerts, and cleanup reason |
 | `muxtail.out` | Captured muxtail output |
 

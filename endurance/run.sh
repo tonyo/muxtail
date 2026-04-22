@@ -17,11 +17,12 @@ set -euo pipefail
 ROTATION_INTERVAL=${1:-300}   # rotate log file every N seconds (default 5 min)
 METRICS_INTERVAL=${2:-60}     # sample CPU/RSS every N seconds (default 1 min)
 DURATION=${3:-30}             # stop after N seconds; 0 = run indefinitely
+OUTPUT=${4:-file}             # muxtail output destination: "file" or "null"
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_DIR=$(dirname "$SCRIPT_DIR")
 
-WORK_DIR=$(mktemp -d /tmp/muxtail-soak-XXXXXX)
+WORK_DIR=$(mktemp -d /tmp/muxtail-endurance-XXXXXX)
 LOG_FILE="$WORK_DIR/app.log"
 MUXTAIL_OUT="$WORK_DIR/muxtail.out"
 METRICS_CSV="$WORK_DIR/metrics.csv"
@@ -32,7 +33,7 @@ log_event() {
     echo "$(date -Iseconds) $*" | tee -a "$EVENTS_LOG"
 }
 
-echo "=== muxtail soak test ==="
+echo "=== muxtail endurance test ==="
 echo "Work dir:          $WORK_DIR"
 echo "Rotation interval: ${ROTATION_INTERVAL}s"
 echo "Metrics interval:  ${METRICS_INTERVAL}s"
@@ -41,6 +42,7 @@ if (( DURATION > 0 )); then
 else
     echo "Duration:          indefinite"
 fi
+echo "Output:            ${OUTPUT}"
 echo ""
 
 # Log system info at startup
@@ -80,7 +82,11 @@ watch_pid() {
 
 # Start muxtail in follow-retry mode
 touch "$LOG_FILE"
-"$BINARY" -F -p basename "$LOG_FILE" >> "$MUXTAIL_OUT" 2>&1 &
+if [[ "$OUTPUT" == "null" ]]; then
+    "$BINARY" -F -p basename "$LOG_FILE" > /dev/null 2>&1 &
+else
+    "$BINARY" -F -p basename "$LOG_FILE" >> "$MUXTAIL_OUT" 2>&1 &
+fi
 MUXTAIL_PID=$!
 ALL_PIDS+=("$MUXTAIL_PID")
 log_event "STARTED muxtail PID=$MUXTAIL_PID"
@@ -124,14 +130,23 @@ watch_pid "rotator" "$ROTATOR_PID" &
     hz=$(getconf CLK_TCK)
     prev_ticks=0
     prev_ts=0
+    prev_write_bytes=0
+    prev_ctx=0
     prev_oom_seq=""
-    echo "timestamp,rss_kb,cpu_pct,sys_free_mb,load1" > "$METRICS_CSV"
+    echo "timestamp,rss_kb,vm_size_kb,vm_swap_kb,cpu_pct,threads,fd_count,write_bytes_delta,ctx_switches_delta,sys_free_mb,sys_swap_used_mb,load1" > "$METRICS_CSV"
     while kill -0 "$MUXTAIL_PID" 2>/dev/null; do
         sleep "$METRICS_INTERVAL"
         ts=$(date +%s)
 
-        # muxtail RSS
-        rss=$(awk '/VmRSS/{print $2}' /proc/"$MUXTAIL_PID"/status 2>/dev/null || echo 0)
+        # muxtail /proc/status fields
+        status=$(cat /proc/"$MUXTAIL_PID"/status 2>/dev/null || echo "")
+        rss=$(echo     "$status" | awk '/VmRSS/{print $2}')
+        vm_size=$(echo "$status" | awk '/VmSize/{print $2}')
+        vm_swap=$(echo "$status" | awk '/VmSwap/{print $2}')
+        threads=$(echo "$status" | awk '/^Threads/{print $2}')
+        vol_ctx=$(echo "$status" | awk '/voluntary_ctxt_switches/{print $2}' | head -1)
+        nonvol_ctx=$(echo "$status" | awk '/nonvoluntary_ctxt_switches/{print $2}')
+        ctx=$(( ${vol_ctx:-0} + ${nonvol_ctx:-0} ))
 
         # muxtail CPU
         stat_line=$(cat /proc/"$MUXTAIL_PID"/stat 2>/dev/null || echo "")
@@ -149,11 +164,23 @@ watch_pid "rotator" "$ROTATOR_PID" &
             fi
         fi
 
-        # System free memory (MB) and 1-min load average
-        sys_free=$(free -m | awk '/^Mem/{print $4}')
+        # muxtail I/O — write_bytes delta since last sample
+        write_bytes=$(awk '/^write_bytes/{print $2}' /proc/"$MUXTAIL_PID"/io 2>/dev/null || echo 0)
+        write_delta=$(( write_bytes - prev_write_bytes ))
+
+        # context switch delta since last sample
+        ctx_delta=$(( ctx - prev_ctx ))
+
+        # Open file descriptor count
+        fd_count=$(ls /proc/"$MUXTAIL_PID"/fd 2>/dev/null | wc -l || echo 0)
+
+        # System memory and load
+        free_out=$(free -m)
+        sys_free=$(echo     "$free_out" | awk '/^Mem/{print $4}')
+        sys_swap=$(echo     "$free_out" | awk '/^Swap/{print $3}')
         load1=$(cut -d' ' -f1 /proc/loadavg)
 
-        echo "$(date -Iseconds),$rss,$cpu,$sys_free,$load1" >> "$METRICS_CSV"
+        echo "$(date -Iseconds),$rss,${vm_size:-0},${vm_swap:-0},$cpu,${threads:-0},$fd_count,$write_delta,$ctx_delta,$sys_free,$sys_swap,$load1" >> "$METRICS_CSV"
 
         # Check dmesg for new OOM kills
         oom_seq=$(dmesg --time-format iso 2>/dev/null | grep -iE 'oom|killed process|out of memory' | tail -1 || true)
@@ -164,6 +191,8 @@ watch_pid "rotator" "$ROTATOR_PID" &
 
         prev_ticks=$ticks
         prev_ts=$ts
+        prev_write_bytes=$write_bytes
+        prev_ctx=$ctx
     done
     log_event "METRICS sampler exiting: muxtail no longer alive"
 ) &
